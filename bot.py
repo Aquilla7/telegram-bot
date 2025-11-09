@@ -13,7 +13,13 @@ ADMINS = [int(x) for x in os.getenv("ADMINS", "0").split(",") if x.strip() and x
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 COMMENTS_CHAT_ID = int(os.getenv("COMMENTS_CHAT_ID", "0"))
 
-bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+from aiogram.client.default import DefaultBotProperties
+
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
+
 dp = Dispatcher()
 
 # === Инициализация БД ===
