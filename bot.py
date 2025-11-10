@@ -40,25 +40,31 @@ async def fetch_videos_from_vk():
     try:
         ydl_opts = {
             "quiet": True,
-            "extract_flat": False
+            "extract_flat": False,  # важно: реальные ссылки
         }
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(VK_VIDEO_URL, download=False)
             entries = info.get("entries") or []
+            if not entries:
+                print("⚠️ Плейлист пуст или недоступен.")
+                return []
+
             videos = []
             for v in entries:
-                url = v.get("webpage_url") or v.get("original_url") or v.get("url")
+                url = v.get("webpage_url") or v.get("url")
                 if not url:
                     continue
-                if url.startswith("/video") or url.startswith("video"):
-                    url = "https://vkvideo.ru/" + url.lstrip("/")
+                if url.startswith("/video"):
+                    url = "https://vkvideo.ru" + url
                 title = v.get("title") or "Видео без названия"
                 vid = v.get("id") or url
                 videos.append({"id": vid, "url": url, "title": title})
-            print(f"📋 Найдено элементов в плейлисте: {len(videos)}")
+            print(f"📋 Найдено {len(videos)} видео.")
+            if videos:
+                print("🔗 Пример URL:", videos[0]["url"])
             return videos
     except Exception as e:
-        print(f"Ошибка при загрузке списка видео: {e}")
+        print(f"❌ Ошибка при загрузке списка видео: {e}")
         return []
 
 # === Получить следующее видео ===
