@@ -1,0 +1,33 @@
+# Netscape HTTP Cookie File
+# https://curl.haxx.se/rfc/cookie_spec.html
+# This is a generated file! Do not edit.
+
+.vkvideo.ru	TRUE	/	TRUE	1793710534	remixstlid	9097068495644773713_vgrxCVKqx3lQ5xSOFF8ph1TlQah1K3erasQPjvVaqIc
+.vkvideo.ru	TRUE	/	TRUE	1792494225	remixstid	1001731123_Oyl4TqT1lYTIzzPj7tMKoSSEttZZs4ZLmSIkhnZBxP0
+.vkvideo.ru	TRUE	/	TRUE	1793812568	remixua	43%7C-1%7C333%7C1625433026
+.vkvideo.ru	TRUE	/	TRUE	1794324802	remixscreen_width	3440
+.vkvideo.ru	TRUE	/	TRUE	1794324802	remixscreen_height	1440
+.vkvideo.ru	TRUE	/	TRUE	1794324802	remixscreen_dpr	1
+.vkvideo.ru	TRUE	/	TRUE	1794324802	remixscreen_depth	24
+.vkvideo.ru	TRUE	/	TRUE	1794324802	remixscreen_winzoom	1
+.vkvideo.ru	TRUE	/	TRUE	1764084802	remixsf	1
+.vkvideo.ru	TRUE	/	TRUE	1794324802	remixdark_color_scheme	1
+.vkvideo.ru	TRUE	/	TRUE	1794324802	remixcolor_scheme_mode	auto
+.vkvideo.ru	TRUE	/	TRUE	1792995601	remixdt	21600
+.vkvideo.ru	TRUE	/	FALSE	1791560002	tmr_lvid	d1fb4463772edbbb7e48e9767533368d
+.vkvideo.ru	TRUE	/	FALSE	1791560002	tmr_lvidTS	1761459611297
+.vkvideo.ru	TRUE	/	TRUE	1763998407	adblock	0
+.vkvideo.ru	TRUE	/	TRUE	1763393602	remixscreen_orient	1
+.vkvideo.ru	TRUE	/	FALSE	1763358296	domain_sid	NgeudKdKajLMsIwSl_GOd%3A1762753496967
+.vkvideo.ru	TRUE	/	TRUE	1770124740	remixdsid	vk1.a.IOG99t4qmyGo5ugeLN7KrcOtTB_nuvrxNowmsRmGdWPVmBsRih1Th9VnmF8Matr8wkKflkKQQ3jBx_I8D8BMRPoo5RJNd_n5x67agN6M_GDA9KzwHrktpKhJUJfAaxlVb9EUuVlN3su0KYGLmV5vDDHZ8vQmEl488ydospE_TYw
+.vkvideo.ru	TRUE	/	TRUE	1794330291	remixlang	0
+vkvideo.ru	FALSE	/	FALSE	1762875207	tmr_detect	0%7C1762788807265
+vkvideo.ru	FALSE	/	TRUE	0	remix_isCookieIgnoreAutologinMigrated	1
+.vkvideo.ru	TRUE	/	TRUE	0	remixcurr_audio	null
+.vkvideo.ru	TRUE	/	TRUE	0	remixmaudio	null
+vkvideo.ru	FALSE	/	TRUE	0	remix_isCookieSubdomainMigrated	1
+.vkvideo.ru	TRUE	/	TRUE	1762853514	prcl	8dfda486d790f6
+.vkvideo.ru	TRUE	/	TRUE	1762790907	httoken	WG-d9YjeLMg6F3cbgWaWLTxNDyr6bVL6HGxL5_3rTD_CGgsSW2AbP5jcofTgu45fhKHANS9wrgd_0McxOmSrn30HtVf-XPQ9om3zy9Zm2dwPSz5KWMepA4hCGrlqQLtodg
+.vkvideo.ru	TRUE	/	TRUE	1794435139	remixrefkey	eb3040bb8a74a7eb98
+.vkvideo.ru	TRUE	/	TRUE	1763392110	remixgp	9446a946f6a31e66d9914ba2c74fd5a3
+.vkvideo.ru	TRUE	/	TRUE	1762789669	remixsts	%7B%22data%22%3A%5B%5B1762788805%2C%22entries_requests%22%2C1%2C%22core_spa%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22common_web%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22video%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22video_showcase%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22page_layout%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22search%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22video_spa_header%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22site_layout%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22video_spa_menu%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22performance_observers%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22css_types%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22vk_sans_observer%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22jobs_devtools_notification%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22ui_common%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22notifier%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22ads_light%22%2C%22web%22%5D%2C%5B1762788805%2C%22entries_requests%22%2C1%2C%22grid_sorter%22%2C%22web%22%5D%2C%5B1762788806%2C%22entries_requests%22%2C1%2C%22tooltips%22%2C%22web%22%5D%5D%2C%22uniqueId%22%3A530396215.87484%7D
