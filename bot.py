@@ -95,10 +95,9 @@ async def publish(callback: types.CallbackQuery):
 
     try:
         msg = await bot.send_video(
-            CHANNEL_ID,
-            FSInputFile(video_path),
-            caption=text,
-            sender_chat_id=CHANNEL_ID  # ← ключевая строка для нативных реакций
+            chat_id=CHANNEL_ID,
+            video=FSInputFile(video_path),
+            caption=text
         )
     except Exception as e:
         await callback.message.answer(f"⚠️ Ошибка при отправке видео: {e}")
