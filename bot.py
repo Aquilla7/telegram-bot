@@ -7,16 +7,17 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFil
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 
-# ===== Настройки из .env =====
+# === Загружаем настройки из .env ===
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMINS = [int(x) for x in os.getenv("ADMINS", "0").split(",") if x.strip() and x != "0"]
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 
+# === Инициализация бота ===
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# ===== База данных =====
+# === Инициализация базы данных ===
 async def init_db():
     async with aiosqlite.connect("bot.db") as db:
         await db.execute(
@@ -25,17 +26,7 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message_id INTEGER,
                 text TEXT,
-                video_path TEXT,
-                love INTEGER DEFAULT 0,
-                like INTEGER DEFAULT 0,
-                clown INTEGER DEFAULT 0,
-                angry INTEGER DEFAULT 0,
-                think INTEGER DEFAULT 0,
-                smile INTEGER DEFAULT 0,
-                pray INTEGER DEFAULT 0,
-                fire INTEGER DEFAULT 0,
-                shock INTEGER DEFAULT 0,
-                dislike INTEGER DEFAULT 0
+                video_path TEXT
             )
             """
         )
@@ -50,255 +41,10 @@ async def init_db():
             )
             """
         )
-        await db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS reactions_log (
-                user_id INTEGER,
-                message_id INTEGER,
-                reaction TEXT,
-                PRIMARY KEY (user_id, message_id, reaction)
-            )
-            """
-        )
         await db.commit()
 
-# ===== Клавиатуры =====
+# === Клавиатуры ===
 def admin_menu():
     return types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text="📝 Создать пост")],
-            [types.KeyboardButton(text="📬 Предложения пользователей")],
-        ],
-        resize_keyboard=True,
-    )
-
-# ===== Реакции =====
-REACTIONS = {
-    "❤️": "love",
-    "👍": "like",
-    "🤡": "clown",
-    "😡": "angry",
-    "🤔": "think",
-    "😅": "smile",
-    "🙏": "pray",
-    "🔥": "fire",
-    "😱": "shock",
-    "👎": "dislike",
-}
-
-def post_reactions(counts: dict[str, int]) -> InlineKeyboardMarkup:
-    buttons = []
-    for emoji, field in REACTIONS.items():
-        buttons.append(
-            InlineKeyboardButton(text=f"{emoji} {counts.get(field, 0)}", callback_data=f"react_{field}")
-        )
-    half = len(buttons) // 2
-    rows = [buttons[:half], buttons[half:]]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-# ===== /start =====
-@dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    if message.from_user.id in ADMINS:
-        await message.answer("👋 Привет, админ!", reply_markup=admin_menu())
-    else:
-        await message.answer("👋 Привет! Отправь идею поста — администраторы её рассмотрят.")
-
-# ===== Создание поста (с видео) =====
-drafts: dict[int, dict] = {}
-
-@dp.message(F.text == "📝 Создать пост")
-async def create_post(message: types.Message):
-    if message.from_user.id not in ADMINS:
-        return
-    drafts[message.from_user.id] = {"stage": "waiting_text"}
-    await message.answer("📄 Введи текст поста:")
-
-@dp.message(lambda m: drafts.get(m.from_user.id, {}).get("stage") == "waiting_text")
-async def got_text(message: types.Message):
-    drafts[message.from_user.id] = {"stage": "maybe_video", "text": message.text}
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Опубликовать без видео", callback_data="publish_no_video")],
-            [InlineKeyboardButton(text="🗑 Отменить", callback_data="cancel")],
-        ]
-    )
-    await message.answer("🎬 Если хочешь, отправь видео сейчас. Или жми «Опубликовать без видео».", reply_markup=kb)
-
-@dp.message(F.video)
-async def got_video(message: types.Message):
-    if message.from_user.id not in drafts:
-        return
-    if drafts[message.from_user.id].get("stage") not in {"maybe_video"}:
-        return
-    file = await bot.get_file(message.video.file_id)
-    os.makedirs("videos", exist_ok=True)
-    path = f"videos/{message.video.file_unique_id}.mp4"
-    await bot.download_file(file.file_path, path)
-    drafts[message.from_user.id]["video_path"] = path
-    drafts[message.from_user.id]["stage"] = "ready"
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Опубликовать", callback_data="publish")],
-            [InlineKeyboardButton(text="🗑 Отменить", callback_data="cancel")],
-        ]
-    )
-    await message.answer("🎥 Видео добавлено. Готов опубликовать.", reply_markup=kb)
-
-@dp.callback_query(F.data.in_(["publish", "publish_no_video"]))
-async def publish(callback: types.CallbackQuery):
-    uid = callback.from_user.id
-    if uid not in ADMINS or uid not in drafts:
-        return
-    text = drafts[uid].get("text", "")
-    video_path = drafts[uid].get("video_path")
-
-    counts0 = {field: 0 for field in REACTIONS.values()}
-    if callback.data == "publish_no_video" or not video_path:
-        msg = await bot.send_message(CHANNEL_ID, text, reply_markup=post_reactions(counts0))
-    else:
-        msg = await bot.send_video(CHANNEL_ID, FSInputFile(video_path), caption=text, reply_markup=post_reactions(counts0))
-
-    async with aiosqlite.connect("bot.db") as db:
-        await db.execute(
-            "INSERT INTO posts (message_id, text, video_path) VALUES (?, ?, ?)",
-            (msg.message_id, text, video_path),
-        )
-        await db.commit()
-
-    drafts.pop(uid, None)
-    await callback.message.edit_text("✅ Пост опубликован в канале.")
-
-@dp.callback_query(F.data == "cancel")
-async def cancel(callback: types.CallbackQuery):
-    drafts.pop(callback.from_user.id, None)
-    await callback.message.edit_text("🚫 Черновик удалён.")
-
-# ===== Реакции: антиспам (1 голос на тип реакции / пользователя / пост) =====
-@dp.callback_query(F.data.startswith("react_"))
-async def react(callback: types.CallbackQuery):
-    field = callback.data.replace("react_", "")
-    user_id = callback.from_user.id
-    msg_id = callback.message.message_id
-
-    async with aiosqlite.connect("bot.db") as db:
-        # Проверяем, не ставил ли пользователь уже такую реакцию
-        await db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS reactions_log (
-                user_id INTEGER,
-                message_id INTEGER,
-                reaction TEXT,
-                PRIMARY KEY (user_id, message_id, reaction)
-            )
-            """
-        )
-        cur = await db.execute(
-            "SELECT 1 FROM reactions_log WHERE user_id=? AND message_id=? AND reaction=?",
-            (user_id, msg_id, field),
-        )
-        if await cur.fetchone():
-            # просто перерисуем текущие счётчики и выйдем
-            cur = await db.execute(
-                f"SELECT {', '.join(REACTIONS.values())} FROM posts WHERE message_id=?",
-                (msg_id,),
-            )
-            row = await cur.fetchone()
-            if row:
-                counts = dict(zip(REACTIONS.values(), row))
-                await callback.message.edit_reply_markup(reply_markup=post_reactions(counts))
-            return
-
-        # берём текущие значения
-        cur = await db.execute(
-            f"SELECT {', '.join(REACTIONS.values())} FROM posts WHERE message_id=?",
-            (msg_id,),
-        )
-        row = await cur.fetchone()
-        if not row:
-            return
-        counts = dict(zip(REACTIONS.values(), row))
-        if field in counts:
-            counts[field] += 1
-
-        # обновляем таблицу posts
-        set_clause = ", ".join(f"{k}=?" for k in REACTIONS.values())
-        await db.execute(
-            f"UPDATE posts SET {set_clause} WHERE message_id=?",
-            [*counts.values(), msg_id],
-        )
-        # логируем факт реакции
-        await db.execute(
-            "INSERT OR IGNORE INTO reactions_log (user_id, message_id, reaction) VALUES (?, ?, ?)",
-            (user_id, msg_id, field),
-        )
-        await db.commit()
-
-    await callback.message.edit_reply_markup(reply_markup=post_reactions(counts))
-
-# ===== Предложения пользователей =====
-@dp.message(F.text == "📬 Предложения пользователей")
-async def show_proposals(message: types.Message):
-    if message.from_user.id not in ADMINS:
-        return
-    async with aiosqlite.connect("bot.db") as db:
-        cur = await db.execute("SELECT id, username, text FROM proposals WHERE status='pending'")
-        rows = await cur.fetchall()
-    if not rows:
-        await message.answer("📭 Нет новых предложений.")
-        return
-    for pid, username, text in rows:
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_{pid}"),
-                    InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{pid}"),
-                ]
-            ]
-        )
-        nick = f"@{username}" if username else "аноним"
-        await message.answer(f"📨 От {nick}:\n\n{text}", reply_markup=kb)
-
-@dp.callback_query(F.data.startswith("approve_"))
-async def approve(callback: types.CallbackQuery):
-    pid = int(callback.data.split("_")[1])
-    async with aiosqlite.connect("bot.db") as db:
-        cur = await db.execute("SELECT text FROM proposals WHERE id=?", (pid,))
-        row = await cur.fetchone()
-        if not row:
-            await callback.answer("Не найдено.")
-            return
-        text = row[0]
-        await db.execute("UPDATE proposals SET status='approved' WHERE id=?", (pid,))
-        await db.commit()
-    counts0 = {field: 0 for field in REACTIONS.values()}
-    await bot.send_message(CHANNEL_ID, text, reply_markup=post_reactions(counts0))
-    await callback.message.edit_text("✅ Публикация одобрена и размещена в канале.")
-
-@dp.callback_query(F.data.startswith("reject_"))
-async def reject(callback: types.CallbackQuery):
-    pid = int(callback.data.split("_")[1])
-    async with aiosqlite.connect("bot.db") as db:
-        await db.execute("UPDATE proposals SET status='rejected' WHERE id=?", (pid,))
-        await db.commit()
-    await callback.message.edit_text("❌ Предложение отклонено.")
-
-# Пользовательские предложения (личка с ботом)
-@dp.message(lambda m: m.from_user.id not in ADMINS)
-async def user_feedback(message: types.Message):
-    async with aiosqlite.connect("bot.db") as db:
-        await db.execute(
-            "INSERT INTO proposals (user_id, username, text) VALUES (?, ?, ?)",
-            (message.from_user.id, message.from_user.username, message.text),
-        )
-        await db.commit()
-    await message.answer("✅ Спасибо! Ваше предложение отправлено администраторам.")
-
-# ===== Запуск =====
-async def main():
-    await init_db()
-    print("✅ Бот запущен. Напиши ему в Telegram!")
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+            [types.KeyboardButton(text]()
