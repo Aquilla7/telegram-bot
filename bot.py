@@ -57,67 +57,53 @@ async def start_cmd(message: types.Message):
     else:
         await message.answer("👋 Привет! Отправь идею поста — администраторы её рассмотрят.")
 
-# === Создание поста (с видео) ===
+# === Создание поста (теперь сразу ждёт видео) ===
 drafts = {}
 
 @dp.message(F.text == "📝 Создать пост")
 async def create_post(message: types.Message):
     if message.from_user.id not in ADMINS:
         return
-    drafts[message.from_user.id] = {"stage": "waiting_text"}
-    await message.answer("📄 Введи текст поста:")
-
-@dp.message(lambda m: drafts.get(m.from_user.id, {}).get("stage") == "waiting_text")
-async def got_text(message: types.Message):
-    drafts[message.from_user.id] = {"stage": "maybe_video", "text": message.text}
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Опубликовать без видео", callback_data="publish_no_video")],
-            [InlineKeyboardButton(text="🗑 Отменить", callback_data="cancel")],
-        ]
-    )
-    await message.answer(
-        "🎬 Если хочешь, отправь видео сейчас. Или нажми «Опубликовать без видео».",
-        reply_markup=kb
-    )
+    drafts[message.from_user.id] = {"stage": "waiting_video"}
+    await message.answer("🎬 Отправь видео, которое хочешь опубликовать (можно с подписью).")
 
 @dp.message(F.video)
 async def got_video(message: types.Message):
-    if message.from_user.id not in drafts:
-        return
-    if drafts[message.from_user.id].get("stage") != "maybe_video":
+    uid = message.from_user.id
+    if uid not in drafts or drafts[uid].get("stage") != "waiting_video":
         return
 
+    # Сохраняем видео локально
     file = await bot.get_file(message.video.file_id)
     os.makedirs("videos", exist_ok=True)
     path = f"videos/{message.video.file_unique_id}.mp4"
     await bot.download_file(file.file_path, path)
 
-    drafts[message.from_user.id]["video_path"] = path
-    drafts[message.from_user.id]["stage"] = "ready"
+    # Текст поста (caption)
+    text = message.caption or ""
 
+    # Клавиатура подтверждения
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Опубликовать", callback_data="publish")],
+            [InlineKeyboardButton(text="✅ Опубликовать", callback_data="publish_video")],
             [InlineKeyboardButton(text="🗑 Отменить", callback_data="cancel")],
         ]
     )
-    await message.answer("🎥 Видео добавлено. Готов опубликовать?", reply_markup=kb)
 
-@dp.callback_query(F.data.in_(["publish", "publish_no_video"]))
+    drafts[uid] = {"stage": "ready", "video_path": path, "text": text}
+    await message.answer("📋 Готово! Опубликовать это видео?", reply_markup=kb)
+
+@dp.callback_query(F.data == "publish_video")
 async def publish(callback: types.CallbackQuery):
     uid = callback.from_user.id
-    if uid not in ADMINS or uid not in drafts:
+    if uid not in drafts or drafts[uid].get("stage") != "ready":
         return
 
-    text = drafts[uid].get("text", "")
-    video_path = drafts[uid].get("video_path")
+    text = drafts[uid]["text"]
+    video_path = drafts[uid]["video_path"]
 
-    # Отправляем пост в канал (реакции — встроенные Telegram)
-    if callback.data == "publish_no_video" or not video_path:
-        msg = await bot.send_message(CHANNEL_ID, text)
-    else:
-        msg = await bot.send_video(CHANNEL_ID, FSInputFile(video_path), caption=text)
+    # Отправляем видео в канал
+    msg = await bot.send_video(CHANNEL_ID, FSInputFile(video_path), caption=text)
 
     # Сохраняем в базу
     async with aiosqlite.connect("bot.db") as db:
@@ -128,10 +114,7 @@ async def publish(callback: types.CallbackQuery):
         await db.commit()
 
     drafts.pop(uid, None)
-    await callback.message.edit_text(
-        "✅ Пост опубликован в канале.\n"
-        "👉 Реакции добавляются автоматически через настройки канала Telegram."
-    )
+    await callback.message.edit_text("✅ Пост опубликован в канале!")
 
 @dp.callback_query(F.data == "cancel")
 async def cancel(callback: types.CallbackQuery):
@@ -203,7 +186,7 @@ async def user_feedback(message: types.Message):
 # === Запуск ===
 async def main():
     await init_db()
-    print("✅ Бот запущен. Напиши ему в Telegram!")
+    print("✅ Бот запущен. Ждёт видео для постов.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
