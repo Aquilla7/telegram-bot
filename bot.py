@@ -219,7 +219,7 @@ async def scheduler():
 
 
 # ---------- /start ----------
-@dp.message(Command("start")))
+@dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     if message.from_user.id in ADMINS:
         await message.answer(
