@@ -20,7 +20,7 @@ DB_PATH = "bot.db"
 POST_INTERVAL = 90 * 60  # 1.5 часа
 
 
-# ---------- Создание базы ----------
+# ---------- Инициализация базы данных ----------
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -29,7 +29,7 @@ async def init_db():
         await db.commit()
 
 
-# ---------- Получение видео со страницы VKVideo ----------
+# ---------- Получение списка видео с VK ----------
 async def fetch_videos_from_vk():
     try:
         ydl_opts = {"quiet": True, "extract_flat": True, "force_generic_extractor": True}
@@ -48,7 +48,7 @@ async def fetch_videos_from_vk():
         return []
 
 
-# ---------- Получение следующего видео для публикации ----------
+# ---------- Получение следующего видео ----------
 async def get_next_video():
     videos = await fetch_videos_from_vk()
     if not videos:
@@ -63,7 +63,7 @@ async def get_next_video():
                 await db.commit()
                 return video
 
-        # если все видео уже опубликованы — начинаем заново
+        # если все видео уже были опубликованы — начинаем заново
         await db.execute("DELETE FROM published_videos")
         await db.commit()
         return videos[0]
@@ -73,13 +73,13 @@ async def get_next_video():
 async def publish_video():
     video = await get_next_video()
     if not video:
-        return None
+        print("⚠️ Нет новых видео для публикации или ошибка при получении списка.")
+        return False
 
     video_url = video["url"]
     caption = '<a href="https://t.me/billysbest">🎥 Видео от @BillysFamily</a>'
     try:
-        await bot.send_message(CHANNEL_ID, f"📤 Публикую видео: {video['title']}")
-
+        print(f"📤 Загружаю видео: {video['title']}")
         ydl_opts = {"outtmpl": "video.mp4"}
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([video_url])
@@ -88,43 +88,51 @@ async def publish_video():
             await bot.send_video(CHANNEL_ID, file, caption=caption)
 
         os.remove("video.mp4")
+        print("✅ Видео успешно опубликовано.")
         return True
     except Exception as e:
-        print(f"Ошибка при отправке видео: {e}")
+        print(f"❌ Ошибка при отправке видео: {e}")
         return False
 
 
-# ---------- Фоновая задача ----------
+# ---------- Планировщик публикаций ----------
 async def scheduler():
     while True:
         success = await publish_video()
         if success:
-            print("✅ Видео опубликовано")
+            print("✅ Видео опубликовано автоматически.")
         else:
-            print("⚠️ Ошибка при публикации видео или нет доступных видео.")
+            print("⚠️ Ошибка при публикации или нет видео.")
         await asyncio.sleep(POST_INTERVAL)
 
 
-# ---------- Обработка команды /start ----------
+# ---------- Команда /start ----------
 @dp.message(Command("start"))
 async def start(message: types.Message):
     kb = InlineKeyboardBuilder()
-    kb.add(InlineKeyboardButton(text="📺 Опубликовать сейчас", callback_data="publish_now"))
-    await message.answer("✅ Бот запущен.\nВидео публикуются каждые 1.5 часа.", reply_markup=kb.as_markup())
+    kb.add(InlineKeyboardButton(text="📤 Опубликовать видео вне очереди", callback_data="publish_now"))
+    await message.answer(
+        "✅ Бот запущен.\nВидео публикуются каждые 1.5 часа.\n"
+        "Нажми кнопку ниже, чтобы опубликовать следующее видео сразу:",
+        reply_markup=kb.as_markup()
+    )
 
 
-# ---------- Кнопка «Опубликовать сейчас» ----------
+# ---------- Кнопка «Опубликовать вне очереди» ----------
 @dp.callback_query(lambda c: c.data == "publish_now")
 async def publish_now(callback_query: types.CallbackQuery):
-    await callback_query.answer("⏳ Публикую сейчас...")
+    print("🚀 Публикация по кнопке запущена")  # лог в консоль Render
+    await callback_query.answer("⏳ Публикую видео...", show_alert=False)
     success = await publish_video()
     if success:
+        print("✅ Видео опубликовано вручную")  # лог
         await callback_query.message.answer("✅ Видео опубликовано!")
     else:
-        await callback_query.message.answer("⚠️ Ошибка при публикации видео.")
+        print("⚠️ Ошибка при ручной публикации видео")
+        await callback_query.message.answer("⚠️ Ошибка при публикации видео или нет доступных видео.")
 
 
-# ---------- Главный запуск ----------
+# ---------- Основной запуск ----------
 async def main():
     await init_db()
     asyncio.create_task(scheduler())
