@@ -83,7 +83,7 @@ async def got_video(message: types.Message):
     drafts[uid] = {"stage": "ready", "video_path": path, "text": text}
     await message.answer("📋 Готово! Опубликовать это видео?", reply_markup=kb)
 
-# === Публикация видео с нативными реакциями ===
+# === Публикация видео с кликабельной подписью ===
 @dp.callback_query(F.data == "publish_video")
 async def publish(callback: types.CallbackQuery):
     uid = callback.from_user.id
@@ -93,11 +93,18 @@ async def publish(callback: types.CallbackQuery):
     text = drafts[uid]["text"]
     video_path = drafts[uid]["video_path"]
 
+    # Добавляем кликабельную ссылку
+    signature = '\n\n<a href="https://t.me/billysbest">@Billy\'s Family</a>'
+    if text.strip():
+        caption = f"{text.strip()}{signature}"
+    else:
+        caption = signature.strip()
+
     try:
         msg = await bot.send_video(
             chat_id=CHANNEL_ID,
             video=FSInputFile(video_path),
-            caption=text
+            caption=caption
         )
     except Exception as e:
         await callback.message.answer(f"⚠️ Ошибка при отправке видео: {e}")
@@ -107,7 +114,7 @@ async def publish(callback: types.CallbackQuery):
     async with aiosqlite.connect("bot.db") as db:
         await db.execute(
             "INSERT INTO posts (message_id, text, video_path) VALUES (?, ?, ?)",
-            (msg.message_id, text, video_path),
+            (msg.message_id, caption, video_path),
         )
         await db.commit()
 
@@ -123,7 +130,7 @@ async def cancel(callback: types.CallbackQuery):
 # === Запуск ===
 async def main():
     await init_db()
-    print("✅ Бот запущен. Видео публикуются с нативными реакциями Telegram.")
+    print("✅ Бот запущен. Видео публикуются с кликабельной подписью на @Billy's Family.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
