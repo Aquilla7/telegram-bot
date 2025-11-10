@@ -5,8 +5,8 @@ import yt_dlp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import FSInputFile
+from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
-from datetime import datetime
 
 # === Загружаем настройки из .env ===
 load_dotenv()
@@ -16,7 +16,10 @@ CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 VK_PLAYLIST_URL = os.getenv("VK_PLAYLIST_URL", "").strip()
 
 # === Инициализация бота ===
-bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
 dp = Dispatcher()
 
 # === Инициализация базы данных ===
@@ -30,7 +33,7 @@ async def init_db():
         """)
         await db.commit()
 
-# === Очистка базы (только один раз) ===
+# === Очистка базы (однократно) ===
 async def clear_published_videos_once():
     flag_file = "cleared.flag"
     if os.path.exists(flag_file):
@@ -74,7 +77,7 @@ async def publish_video():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([video_url])
 
-        caption = f"🎬 Видео от <a href='https://t.me/billysbest'>@BillysFamily</a>"
+        caption = f"🎥 Видео от <a href='https://t.me/billysbest'>@BillysFamily</a>"
         await bot.send_video(CHANNEL_ID, video=FSInputFile(file_path), caption=caption)
 
         async with aiosqlite.connect("bot.db") as db:
