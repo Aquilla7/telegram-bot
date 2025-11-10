@@ -8,7 +8,7 @@ from aiogram.types import FSInputFile
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 
-# === Загружаем настройки из .env ===
+# === Загружаем настройки ===
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMINS = [int(x) for x in os.getenv("ADMINS", "0").split(",") if x.strip() and x != "0"]
@@ -46,19 +46,46 @@ async def clear_published_videos_once():
         f.write("done")
     print("🧹 Таблица published_videos успешно очищена!")
 
-# === Получение следующего видео из VK ===
+# === Уведомление админам ===
+async def notify_admins(message: str):
+    for admin_id in ADMINS:
+        try:
+            await bot.send_message(admin_id, f"⚠️ {message}")
+        except Exception as e:
+            print(f"Не удалось уведомить админа {admin_id}: {e}")
+
+# === Получение следующего видео ===
 async def get_next_video():
     async with aiosqlite.connect("bot.db") as db:
         cur = await db.execute("SELECT url FROM published_videos")
         published = [r[0] for r in await cur.fetchall()]
 
     ydl_opts = {"quiet": True, "extract_flat": True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(VK_PLAYLIST_URL, download=False)
-        for entry in info.get("entries", []):
-            url = f"https://vk.com/video{entry['url']}"
-            if url not in published:
-                return url
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(VK_PLAYLIST_URL, download=False)
+    except Exception as e:
+        error_msg = f"Ошибка при получении данных с VK: {e}"
+        print("🚨", error_msg)
+        await notify_admins(error_msg)
+        return None
+
+    entries = info.get("entries", [])
+    print(f"📋 Найдено элементов в плейлисте: {len(entries)}")
+
+    if not entries:
+        msg = "Плейлист пуст или VK не отдаёт данные. Проверь доступность ссылки."
+        print("🚫", msg)
+        await notify_admins(msg)
+        return None
+
+    for entry in entries:
+        url = f"https://vk.com/video{entry.get('url')}"
+        if url not in published:
+            print(f"➡️ Следующее новое видео найдено: {url}")
+            return url
+
+    print("📭 Все видео уже опубликованы.")
     return None
 
 # === Публикация видео ===
@@ -88,7 +115,9 @@ async def publish_video():
         print(f"✅ Опубликовано: {video_url}")
         return True
     except Exception as e:
-        print(f"⚠️ Ошибка при публикации видео: {e}")
+        err_text = f"Ошибка при публикации видео ({video_url}): {e}"
+        print("🚨", err_text)
+        await notify_admins(err_text)
         return False
 
 # === Цикл автопостинга ===
