@@ -1,164 +1,135 @@
 import asyncio
-import os
+import aiohttp
 import aiosqlite
-import yt_dlp
-from aiogram import Bot, Dispatcher, types, F
+import os
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import FSInputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.client.default import DefaultBotProperties
-from dotenv import load_dotenv
+from yt_dlp import YoutubeDL
 
-# === Загружаем настройки ===
-load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMINS = [int(x) for x in os.getenv("ADMINS", "0").split(",") if x.strip() and x != "0"]
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
-VK_PLAYLIST_URL = os.getenv("VK_PLAYLIST_URL", "").strip()
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+VK_VIDEO_URL = "https://vkvideo.ru/@pruzankin/added"
 
-# === Инициализация бота ===
-bot = Bot(
-    token=BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode="HTML")
-)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# === Инициализация базы данных ===
+DB_PATH = "bot.db"
+POST_INTERVAL = 90 * 60  # 1.5 часа
+
+
+# ---------- Создание базы ----------
 async def init_db():
-    async with aiosqlite.connect("bot.db") as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS published_videos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url TEXT UNIQUE
-            )
-        """)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS published_videos (id TEXT PRIMARY KEY)"
+        )
         await db.commit()
 
-# === Очистка базы (однократно) ===
-async def clear_published_videos_once():
-    flag_file = "cleared.flag"
-    if os.path.exists(flag_file):
-        print("⏩ Очистка пропущена (уже выполнена ранее).")
-        return
-    async with aiosqlite.connect("bot.db") as db:
+
+# ---------- Получение видео со страницы VKVideo ----------
+async def fetch_videos_from_vk():
+    try:
+        ydl_opts = {"quiet": True, "extract_flat": True, "force_generic_extractor": True}
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(VK_VIDEO_URL, download=False)
+            if "entries" not in info or not info["entries"]:
+                return []
+            videos = [
+                {"id": v["id"], "url": v["url"], "title": v.get("title", "Видео без названия")}
+                for v in info["entries"]
+                if v.get("url")
+            ]
+            return videos
+    except Exception as e:
+        print(f"Ошибка при загрузке списка видео: {e}")
+        return []
+
+
+# ---------- Получение следующего видео для публикации ----------
+async def get_next_video():
+    videos = await fetch_videos_from_vk()
+    if not videos:
+        return None
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        for video in videos:
+            cursor = await db.execute("SELECT id FROM published_videos WHERE id = ?", (video["id"],))
+            exists = await cursor.fetchone()
+            if not exists:
+                await db.execute("INSERT INTO published_videos (id) VALUES (?)", (video["id"],))
+                await db.commit()
+                return video
+
+        # если все видео уже опубликованы — начинаем заново
         await db.execute("DELETE FROM published_videos")
         await db.commit()
-    with open(flag_file, "w") as f:
-        f.write("done")
-    print("🧹 Таблица published_videos успешно очищена!")
+        return videos[0]
 
-# === Уведомление админам ===
-async def notify_admins(message: str):
-    for admin_id in ADMINS:
-        try:
-            await bot.send_message(admin_id, f"⚠️ {message}")
-        except Exception as e:
-            print(f"Не удалось уведомить админа {admin_id}: {e}")
 
-# === Получение следующего видео ===
-async def get_next_video():
-    async with aiosqlite.connect("bot.db") as db:
-        cur = await db.execute("SELECT url FROM published_videos")
-        published = [r[0] for r in await cur.fetchall()]
-
-    ydl_opts = {"quiet": True, "extract_flat": True}
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(VK_PLAYLIST_URL, download=False)
-    except Exception as e:
-        error_msg = f"Ошибка при получении данных с VK: {e}"
-        print("🚨", error_msg)
-        await notify_admins(error_msg)
-        return None
-
-    entries = info.get("entries", [])
-    print(f"📋 Найдено элементов в плейлисте: {len(entries)}")
-
-    if not entries:
-        msg = "Плейлист пуст или VK не отдаёт данные. Проверь доступность ссылки."
-        print("🚫", msg)
-        await notify_admins(msg)
-        return None
-
-    for entry in entries:
-        url = f"https://vk.com/video{entry.get('url')}"
-        if url not in published:
-            print(f"➡️ Следующее новое видео найдено: {url}")
-            return url
-
-    print("📭 Все видео уже опубликованы.")
-    return None
-
-# === Публикация видео ===
+# ---------- Публикация видео ----------
 async def publish_video():
-    video_url = await get_next_video()
-    if not video_url:
-        print("📭 Нет новых видео для публикации.")
-        return False
+    video = await get_next_video()
+    if not video:
+        return None
 
+    video_url = video["url"]
+    caption = '<a href="https://t.me/billysbest">🎥 Видео от @BillysFamily</a>'
     try:
-        os.makedirs("videos", exist_ok=True)
-        file_path = "videos/video.mp4"
-        print(f"🎬 Скачиваю: {video_url}")
+        await bot.send_message(CHANNEL_ID, f"📤 Публикую видео: {video['title']}")
 
-        ydl_opts = {"outtmpl": file_path, "quiet": True, "format": "best"}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl_opts = {"outtmpl": "video.mp4"}
+        with YoutubeDL(ydl_opts) as ydl:
             ydl.download([video_url])
 
-        caption = f"🎥 Видео от <a href='https://t.me/billysbest'>@BillysFamily</a>"
-        await bot.send_video(CHANNEL_ID, video=FSInputFile(file_path), caption=caption)
+        with open("video.mp4", "rb") as file:
+            await bot.send_video(CHANNEL_ID, file, caption=caption)
 
-        async with aiosqlite.connect("bot.db") as db:
-            await db.execute("INSERT OR IGNORE INTO published_videos (url) VALUES (?)", (video_url,))
-            await db.commit()
-
-        os.remove(file_path)
-        print(f"✅ Опубликовано: {video_url}")
+        os.remove("video.mp4")
         return True
     except Exception as e:
-        err_text = f"Ошибка при публикации видео ({video_url}): {e}"
-        print("🚨", err_text)
-        await notify_admins(err_text)
+        print(f"Ошибка при отправке видео: {e}")
         return False
 
-# === Цикл автопостинга ===
-async def auto_post_loop():
-    await asyncio.sleep(5)
+
+# ---------- Фоновая задача ----------
+async def scheduler():
     while True:
-        await publish_video()
-        print("⏰ Следующая публикация через 1.5 часа...")
-        await asyncio.sleep(5400)
+        success = await publish_video()
+        if success:
+            print("✅ Видео опубликовано")
+        else:
+            print("⚠️ Ошибка при публикации видео или нет доступных видео.")
+        await asyncio.sleep(POST_INTERVAL)
 
-# === Команда /start ===
+
+# ---------- Обработка команды /start ----------
 @dp.message(Command("start"))
-async def start_cmd(message: types.Message):
-    if message.from_user.id in ADMINS:
-        kb = types.ReplyKeyboardMarkup(
-            keyboard=[[types.KeyboardButton(text="📤 Опубликовать видео вне очереди")]],
-            resize_keyboard=True
-        )
-        await message.answer("👋 Привет, админ!\nБот публикует видео каждые 1.5 часа.", reply_markup=kb)
-    else:
-        await message.answer("Привет! У тебя нет прав администратора.")
+async def start(message: types.Message):
+    kb = InlineKeyboardBuilder()
+    kb.add(InlineKeyboardButton(text="📺 Опубликовать сейчас", callback_data="publish_now"))
+    await message.answer("✅ Бот запущен.\nВидео публикуются каждые 1.5 часа.", reply_markup=kb.as_markup())
 
-# === Обработка кнопки "Опубликовать вне очереди" ===
-@dp.message(F.text == "📤 Опубликовать видео вне очереди")
-async def manual_publish(message: types.Message):
-    if message.from_user.id not in ADMINS:
-        return await message.answer("⛔ У вас нет прав.")
-    await message.answer("⏳ Публикую следующее видео из плейлиста...")
-    result = await publish_video()
-    if result:
-        await message.answer("✅ Видео опубликовано!")
-    else:
-        await message.answer("⚠️ Новых видео нет или произошла ошибка.")
 
-# === Запуск ===
+# ---------- Кнопка «Опубликовать сейчас» ----------
+@dp.callback_query(lambda c: c.data == "publish_now")
+async def publish_now(callback_query: types.CallbackQuery):
+    await callback_query.answer("⏳ Публикую сейчас...")
+    success = await publish_video()
+    if success:
+        await callback_query.message.answer("✅ Видео опубликовано!")
+    else:
+        await callback_query.message.answer("⚠️ Ошибка при публикации видео.")
+
+
+# ---------- Главный запуск ----------
 async def main():
     await init_db()
-    await clear_published_videos_once()
-    asyncio.create_task(auto_post_loop())
-    print("✅ Бот запущен. Автопостинг каждые 1.5 часа.")
+    asyncio.create_task(scheduler())
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
