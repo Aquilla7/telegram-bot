@@ -18,9 +18,15 @@ VK_VIDEO_URL = os.getenv("VK_PLAYLIST_URL", "").strip()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# === Инициализация базы данных ===
+DB_PATH = "bot.db"
+POST_INTERVAL = 90 * 60  # 1.5 часа
+TMP_FILE = "video.mp4"
+COOKIES_PATH = "cookies.txt"  # положи сюда cookies, если плейлист приватный
+
+
+# ---------- База ----------
 async def init_db():
-    async with aiosqlite.connect("bot.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS published_videos (
                 id TEXT PRIMARY KEY,
@@ -29,138 +35,216 @@ async def init_db():
         """)
         await db.commit()
 
-# === Клавиатура администратора ===
+
+# ---------- Клавиатура ----------
 def admin_menu():
     builder = ReplyKeyboardBuilder()
     builder.add(types.KeyboardButton(text="📤 Опубликовать видео вне очереди"))
     return builder.as_markup(resize_keyboard=True)
 
-# === Получение видео с VK ===
+
+# ---------- Вспомогательное: опции yt-dlp ----------
+def yd_opts_common(download: bool):
+    """
+    Общие опции yt-dlp. Если download=True — на скачивание файла,
+    иначе — на получение метаданных.
+    """
+    opts = {
+        "quiet": True,
+        "extract_flat": False,  # нужно для реальных ссылок и форматов
+        "noplaylist": False,
+        "retries": 10,
+        "socket_timeout": 20,
+        "http_headers": {
+            # иногда помогает vkvideo отдать поток
+            "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        },
+    }
+    # если есть cookies.txt — используем (обычно не нужно для публичных плейлистов)
+    if os.path.exists(COOKIES_PATH):
+        opts["cookiefile"] = COOKIES_PATH
+
+    if download:
+        # Стараемся взять MP4/H264/AAC, и ограничить размер, чтобы < 2GB
+        # Без ffmpeg: запрещаем ремаксы и берём готовые mp4
+        opts.update({
+            "outtmpl": TMP_FILE,
+            "format":
+                # лучший mp4-видео + m4a-аудио, оба < 1.9 ГБ
+                "bv*[ext=mp4][filesize<1900M]+ba[ext=m4a]/"
+                # либо одиночный mp4 до 1.9 ГБ
+                "b[ext=mp4][filesize<1900M]/"
+                # fallback: любой лучший ≤ 1.9 ГБ
+                "best[filesize<1900M]/best",
+            "concurrent_fragment_downloads": 5,
+        })
+    return opts
+
+
+# ---------- Получение списка видео из плейлиста ----------
 async def fetch_videos_from_vk():
     try:
-        ydl_opts = {
-            "quiet": True,
-            "extract_flat": False,  # важно: реальные ссылки
-        }
-        with YoutubeDL(ydl_opts) as ydl:
+        with YoutubeDL(yd_opts_common(download=False)) as ydl:
             info = ydl.extract_info(VK_VIDEO_URL, download=False)
-            entries = info.get("entries") or []
-            if not entries:
-                print("⚠️ Плейлист пуст или недоступен.")
-                return []
 
-            videos = []
-            for v in entries:
-                url = v.get("webpage_url") or v.get("url")
-                if not url:
-                    continue
-                if url.startswith("/video"):
-                    url = "https://vkvideo.ru" + url
-                title = v.get("title") or "Видео без названия"
-                vid = v.get("id") or url
-                videos.append({"id": vid, "url": url, "title": title})
-            print(f"📋 Найдено {len(videos)} видео.")
-            if videos:
-                print("🔗 Пример URL:", videos[0]["url"])
-            return videos
+        entries = info.get("entries") or []
+        if not entries:
+            print("⚠️ Плейлист пуст или недоступен. URL:", VK_VIDEO_URL)
+            return []
+
+        videos = []
+        for v in entries:
+            # Вытаскиваем URL страницы видео
+            url = v.get("webpage_url") or v.get("original_url") or v.get("url")
+            if not url:
+                continue
+            # Нормализуем относительные ссылки
+            if url.startswith("/video"):
+                url = "https://vkvideo.ru" + url
+            title = v.get("title") or "Видео без названия"
+            vid = v.get("id") or url
+            videos.append({"id": vid, "url": url, "title": title})
+
+        print(f"📋 Найдено видео в плейлисте: {len(videos)}")
+        if videos:
+            print("🔗 Пример URL:", videos[0]["url"])
+        return videos
+
     except Exception as e:
         print(f"❌ Ошибка при загрузке списка видео: {e}")
         return []
 
-# === Получить следующее видео ===
+
+# ---------- Выбор следующего ----------
 async def get_next_video():
     videos = await fetch_videos_from_vk()
     if not videos:
         return None
 
-    async with aiosqlite.connect("bot.db") as db:
-        published = await db.execute_fetchall("SELECT id FROM published_videos")
-        published_ids = {row[0] for row in published}
+    async with aiosqlite.connect(DB_PATH) as db:
+        rows = await db.execute_fetchall("SELECT id FROM published_videos")
+        published_ids = {r[0] for r in rows}
 
+    # первое ещё не публиковавшееся
     for video in videos:
         if video["id"] not in published_ids:
             return video
+
+    # если всё уже было, крутим по кругу
     return random.choice(videos)
 
-# === Публикация видео ===
+
+# ---------- Отправка видео ----------
 async def publish_video():
     video = await get_next_video()
     if not video:
-        print("⚠️ Нет новых видео или ошибка при получении списка.")
-        await notify_admins("⚠️ Ошибка при публикации видео или нет доступных видео.")
+        print("⚠️ Нет доступных видео (список пуст/недоступен).")
+        await notify_admins("⚠️ Нет доступных видео или ошибка получения плейлиста.")
         return False
 
     video_url = video["url"]
     caption = '<a href="https://t.me/billysbest">🎥 Видео от @BillysFamily</a>'
 
+    # 1) Всегда скачиваем файл (vkvideo не даёт прямой mp4 по URL страницы)
     try:
-        print(f"📤 Отправляю по URL: {video_url}")
-        await bot.send_video(CHANNEL_ID, video=video_url, caption=caption)
-        print("✅ Отправлено по URL.")
-    except Exception as e:
-        print(f"Не удалось по URL ({e}), пробую скачать файл...")
-        try:
-            ydl_opts = {
-                "outtmpl": "video.mp4",
-                "format": "best[filesize<1900M]/best",
-                "quiet": True,
-            }
-            with YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_url])
-            with open("video.mp4", "rb") as f:
-                await bot.send_video(CHANNEL_ID, f, caption=caption)
-            os.remove("video.mp4")
-        except Exception as e2:
-            print(f"❌ Ошибка при отправке: {e2}")
-            await notify_admins("⚠️ Ошибка при публикации видео или нет доступных видео.")
+        if os.path.exists(TMP_FILE):
+            try:
+                os.remove(TMP_FILE)
+            except Exception:
+                pass
+
+        print(f"⬇️  Скачиваю: {video['title']} | {video_url}")
+        with YoutubeDL(yd_opts_common(download=True)) as ydl:
+            res = ydl.extract_info(video_url, download=True)
+            # диагностические принты по формату
+            chosen = res.get("requested_formats") or ([res] if res else [])
+            for i, fmt in enumerate(chosen):
+                fext = fmt.get("ext")
+                fsize = fmt.get("filesize") or fmt.get("filesize_approx")
+                print(f"   · формат[{i}]: ext={fext}, size={fsize}")
+
+        if not os.path.exists(TMP_FILE):
+            print("❌ Файл не скачался (нет video.mp4).")
+            await notify_admins("❌ Файл не скачался — возможно, нужны cookies или видео слишком большое.")
             return False
 
-    async with aiosqlite.connect("bot.db") as db:
-        await db.execute("INSERT OR REPLACE INTO published_videos (id, url) VALUES (?, ?)",
-                         (video["id"], video_url))
-        await db.commit()
-    return True
+        # 2) Отправляем файл
+        print("📤 Отправляю в канал файл:", TMP_FILE)
+        with open(TMP_FILE, "rb") as f:
+            await bot.send_video(CHANNEL_ID, f, caption=caption)
 
-# === Уведомление админов ===
-async def notify_admins(text):
+        # 3) Сохраняем в БД как опубликованное
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO published_videos (id, url) VALUES (?, ?)",
+                (video["id"], video_url)
+            )
+            await db.commit()
+
+        print("✅ Публикация успешна.")
+        return True
+
+    except Exception as e:
+        print(f"❌ Ошибка при публикации: {e}")
+        await notify_admins(f"❌ Ошибка при публикации: {e}")
+        return False
+
+    finally:
+        # Чистим временный файл
+        try:
+            if os.path.exists(TMP_FILE):
+                os.remove(TMP_FILE)
+        except Exception:
+            pass
+
+
+# ---------- Уведомление админов ----------
+async def notify_admins(text: str):
     for admin_id in ADMINS:
         try:
             await bot.send_message(admin_id, text)
-        except:
+        except Exception:
             pass
 
-# === Автопостинг каждые 1.5 часа ===
+
+# ---------- Планировщик ----------
 async def scheduler():
     while True:
-        print("⏰ Проверяю новые видео...")
+        print("⏰ Запуск автоматической публикации...")
         await publish_video()
-        print("🕒 Следующая публикация через 1.5 часа.")
-        await asyncio.sleep(5400)
+        print("🕒 Следующая попытка через 1.5 часа.")
+        await asyncio.sleep(POST_INTERVAL)
 
-# === Команда /start ===
-@dp.message(Command("start"))
+
+# ---------- /start ----------
+@dp.message(Command("start")))
 async def start_cmd(message: types.Message):
     if message.from_user.id in ADMINS:
-        await message.answer("👋 Привет, админ!", reply_markup=admin_menu())
+        await message.answer(
+            "👋 Привет, админ!\n"
+            "Бот публикует видео из плейлиста каждые 1.5 часа.",
+            reply_markup=admin_menu()
+        )
     else:
         await message.answer("Этот бот предназначен только для администраторов.")
 
-# === Ручная публикация ===
+
+# ---------- Ручная публикация ----------
 @dp.message(lambda m: m.text == "📤 Опубликовать видео вне очереди")
 async def manual_publish(message: types.Message):
     if message.from_user.id not in ADMINS:
         return
-    await message.answer("🚀 Публикую видео...")
-    success = await publish_video()
-    if success:
-        await message.answer("✅ Видео опубликовано!")
-    else:
-        await message.answer("⚠️ Ошибка при публикации видео или нет доступных видео.")
+    await message.answer("🚀 Публикую следующее видео...")
+    ok = await publish_video()
+    await message.answer("✅ Готово!" if ok else "⚠️ Не удалось опубликовать.")
 
-# === Запуск ===
+
+# ---------- Запуск ----------
 async def main():
     await init_db()
-    print(f"🎬 Использую плейлист: {VK_VIDEO_URL}")
+    print(f"🎬 Используется плейлист: {VK_VIDEO_URL}")
     asyncio.create_task(scheduler())
     await dp.start_polling(bot)
 
