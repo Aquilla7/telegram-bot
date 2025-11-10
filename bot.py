@@ -11,7 +11,8 @@ from yt_dlp import YoutubeDL
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
-VK_VIDEO_URL = "https://vkvideo.ru/@pruzankin/added"
+VK_VIDEO_URL = os.getenv("VK_PLAYLIST_URL", "").strip()
+
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
