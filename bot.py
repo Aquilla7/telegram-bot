@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+import shutil
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -9,12 +10,13 @@ from yt_dlp import YoutubeDL
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 import chromedriver_autoinstaller
 
-# ===== Автоматическая установка ChromeDriver =====
+# ======== Автоматическая установка chromedriver ========
 chromedriver_autoinstaller.install()
 
-# ===== Настройки =====
+# ======== Загрузка конфигурации ========
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
@@ -25,12 +27,18 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
+# ======== Путь к браузеру (Render Linux окружение) ========
+CHROME_PATH = shutil.which("chromium-browser")
+if not CHROME_PATH:
+    CHROME_PATH = "/usr/bin/chromium-browser"  # запасной путь
 
-# ===== Получение cookies через Chromium =====
+
+# ======== Получение cookies через Chromium ========
 def get_vk_cookies():
     try:
         logging.info("🌐 Запуск headless Chromium для получения cookies...")
         options = Options()
+        options.binary_location = CHROME_PATH
         options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
@@ -53,11 +61,11 @@ def get_vk_cookies():
         logging.info(f"🍪 Получено cookies: {len(cookies_dict)}")
         return cookies_dict
     except Exception as e:
-        logging.error(f"Ошибка при получении cookies: {e}")
+        logging.error(f"Ошибка при запуске Chromium: {e}")
         return {}
 
 
-# ===== Настройки yt-dlp =====
+# ======== Настройки yt-dlp ========
 def build_ydl_opts(cookies):
     return {
         "proxy": PROXY_URL,
@@ -73,7 +81,7 @@ def build_ydl_opts(cookies):
     }
 
 
-# ===== Получение списка видео =====
+# ======== Получение списка видео ========
 async def get_video_list(cookies):
     try:
         with YoutubeDL(build_ydl_opts(cookies)) as ydl:
@@ -84,7 +92,7 @@ async def get_video_list(cookies):
         return []
 
 
-# ===== Скачивание видео =====
+# ======== Скачивание видео ========
 async def download_video(url, cookies):
     try:
         opts = build_ydl_opts(cookies)
@@ -97,7 +105,7 @@ async def download_video(url, cookies):
         return None
 
 
-# ===== Публикация видео =====
+# ======== Публикация видео ========
 async def publish_video():
     cookies = get_vk_cookies()
     videos = await get_video_list(cookies)
@@ -123,7 +131,7 @@ async def publish_video():
     os.remove(video_file)
 
 
-# ===== Автопубликация =====
+# ======== Автопубликация ========
 async def auto_publish():
     while True:
         logging.info("🔁 Автопубликация...")
@@ -131,25 +139,25 @@ async def auto_publish():
         await asyncio.sleep(5400)  # 1.5 часа
 
 
-# ===== Команды =====
+# ======== Команда /start ========
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Опубликовать видео вне очереди", callback_data="publish_now")]
+            [InlineKeyboardButton(text="📤 Опубликовать сейчас", callback_data="publish_now")]
         ]
     )
-    await message.answer("Бот запущен! Публикация каждые 1.5 часа.", reply_markup=keyboard)
+    await message.answer("🤖 Бот запущен! Публикация каждые 1.5 часа.", reply_markup=keyboard)
 
 
 @dp.callback_query(lambda c: c.data == "publish_now")
 async def publish_now(callback_query: types.CallbackQuery):
     await callback_query.message.answer("🚀 Публикую видео вне очереди...")
     await publish_video()
-    await callback_query.answer("Готово!")
+    await callback_query.answer("✅ Готово!")
 
 
-# ===== Запуск =====
+# ======== Запуск ========
 async def main():
     logging.info(f"🎬 Плейлист: {VK_PLAYLIST_URL}")
     logging.info(f"🌐 Прокси: {PROXY_URL}")
