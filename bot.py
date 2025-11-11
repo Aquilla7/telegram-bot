@@ -32,7 +32,7 @@ TMP_FILE = "video.mp4"
 COOKIES_PATH = "cookies.txt"
 
 # === Конфигурация yt-dlp ===
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0"
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
 YDL_BASE = {
     "cookiefile": COOKIES_PATH,
     "user_agent": UA,
@@ -42,8 +42,9 @@ YDL_BASE = {
         "Referer": "https://vkvideo.ru/",
         "Origin": "https://vkvideo.ru",
     },
-    "quiet": True,
+    "geo_bypass": True,
     "nocheckcertificate": True,
+    "quiet": True,
 }
 
 print(f"🌐 Используется SOCKS5-прокси: {PROXY_URL}")
@@ -69,8 +70,13 @@ def admin_menu():
 async def fetch_videos_from_vk():
     print(f"🌍 Проверка прокси: {YDL_BASE.get('proxy')}")
     try:
-        opts = {**YDL_BASE, "extract_flat": "in_playlist", "skip_download": True}
-        with YoutubeDL(opts) as ydl:
+        ydl_opts = {
+            **YDL_BASE,
+            "extract_flat": "in_playlist",
+            "skip_download": True,
+            "force_generic_extractor": False,
+        }
+        with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(VK_PLAYLIST_URL, download=False)
 
         if not info:
@@ -125,7 +131,11 @@ async def publish_video():
             os.remove(TMP_FILE)
 
         print(f"⬇️ Скачиваю: {video['title']} | {video_url}")
-        opts = {**YDL_BASE, "format": "best[ext=mp4][filesize<1900M]/best", "outtmpl": TMP_FILE}
+        opts = {
+            **YDL_BASE,
+            "format": "best[ext=mp4][filesize<1900M]/best",
+            "outtmpl": TMP_FILE,
+        }
         with YoutubeDL(opts) as ydl:
             ydl.download([video_url])
 
