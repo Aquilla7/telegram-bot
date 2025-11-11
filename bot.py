@@ -1,149 +1,108 @@
 import os
 import asyncio
 import aiohttp
-import logging
-import random
+import requests
+from bs4 import BeautifulSoup
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.enums import ParseMode
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.client.default import DefaultBotProperties
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
-import yt_dlp
 
-# ==========================
-# ЛОГИРОВАНИЕ
-# ==========================
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# ==========================
-# ЗАГРУЗКА .ENV
-# ==========================
 load_dotenv()
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
-VK_PLAYLIST_URL = os.getenv("VK_PLAYLIST_URL")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+PLAYLIST_URL = os.getenv("PLAYLIST_URL")
 
-# ==========================
-# ПРОКСИ НАСТРОЙКИ
-# ==========================
-PROXY_USER = "VGRNRd"
-PROXY_PASS = "0BVZC4"
-PROXY_HOST = "147.45.38.23"
-PROXY_PORT = "8000"
+# прокси (если нужно)
+PROXY_HOST = os.getenv("PROXY_HOST")
+PROXY_PORT = os.getenv("PROXY_PORT")
+PROXY_USER = os.getenv("PROXY_USER")
+PROXY_PASS = os.getenv("PROXY_PASS")
 
-PROXIES = [
-    f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
-    f"https://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
-    None,  # без прокси
-]
+PROXY_URL = None
+if PROXY_HOST and PROXY_PORT:
+    if PROXY_USER and PROXY_PASS:
+        PROXY_URL = f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
+    else:
+        PROXY_URL = f"http://{PROXY_HOST}:{PROXY_PORT}"
 
-# ==========================
-# НАСТРОЙКА БОТА
-# ==========================
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ==========================
-# ПРОВЕРКА ПРОКСИ
-# ==========================
-async def find_working_proxy():
-    """Перебирает варианты и возвращает первый рабочий прокси"""
-    for proxy in PROXIES:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get("https://vkvideo.ru", proxy=proxy, timeout=10) as resp:
-                    if resp.status == 200:
-                        logger.info(f"✅ Рабочее соединение найдено: {proxy or 'без прокси'}")
-                        return proxy
-        except Exception as e:
-            logger.warning(f"⚠️ Прокси не подошёл: {proxy} — {e}")
-    logger.error("❌ Ни один вариант соединения не сработал.")
-    return None
+# --- парсер ссылок видео из плейлиста VK ---
+def get_vk_video_links(playlist_url):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(playlist_url, headers=headers, proxies={"http": PROXY_URL, "https": PROXY_URL})
+    soup = BeautifulSoup(r.text, "html.parser")
+    links = []
+    for a in soup.find_all("a", href=True):
+        if "vkvideo.ru/video" in a["href"]:
+            full_link = a["href"]
+            if not full_link.startswith("http"):
+                full_link = "https://vkvideo.ru" + full_link
+            links.append(full_link.split("?")[0])
+    return list(set(links))
 
-# ==========================
-# ЗАГРУЗКА СПИСКА ВИДЕО
-# ==========================
-async def fetch_vk_videos(proxy_url):
-    cookie_file = "cookies.txt"
-    ydl_opts = {
-        "proxy": proxy_url,
-        "extract_flat": True,
-        "quiet": True,
-        "skip_download": True,
-    }
+# --- получение прямых ссылок через SaveFrom ---
+async def get_direct_link(video_url):
+    api_url = "https://worker.savefrom.net/api/convert"
+    payload = {"url": video_url}
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-    if os.path.exists(cookie_file):
-        ydl_opts["cookiefile"] = cookie_file
-        logger.info("🍪 Используется cookies.txt для авторизации VK.")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(api_url, json=payload, headers=headers, proxy=PROXY_URL) as r:
+            try:
+                data = await r.json()
+                return data["url"][0]["url"]
+            except Exception:
+                return None
 
-    logger.info(f"📡 Используется прокси: {proxy_url or 'без прокси'}")
-    logger.info(f"🎞️ Используется плейлист: {VK_PLAYLIST_URL}")
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            result = ydl.extract_info(VK_PLAYLIST_URL, download=False)
-
-        if "entries" in result:
-            videos = [e["url"] for e in result["entries"] if "url" in e]
-            logger.info(f"Найдено видео в плейлисте: {len(videos)}")
-            return videos
-        else:
-            logger.warning("Нет доступных видео в плейлисте.")
-            return []
-    except Exception as e:
-        logger.error(f"Ошибка при получении плейлиста: {e}")
-        return []
-
-# ==========================
-# ПУБЛИКАЦИЯ ВИДЕО
-# ==========================
-async def publish_video(proxy_url):
-    logger.info("🚀 Автопубликация...")
-    videos = await fetch_vk_videos(proxy_url)
-    if not videos:
-        await bot.send_message(CHANNEL_ID, "⚠️ Нет доступных видео или ошибка получения плейлиста.")
-        return
-    video_url = random.choice(videos)
-    await bot.send_message(CHANNEL_ID, f"📹 Новое видео: {video_url}")
-
-# ==========================
-# КОМАНДЫ
-# ==========================
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
+# --- кнопка "опубликовать сейчас" ---
+def admin_menu():
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📤 Опубликовать видео вне очереди", callback_data="publish_now")]
+        [InlineKeyboardButton(text="📤 Опубликовать сейчас", callback_data="publish_now")]
     ])
-    await message.answer("🤖 Бот активен. Автопубликация каждые 1.5 часа.", reply_markup=kb)
+    return kb
 
+# --- команда /start ---
+@dp.message(Command("start"))
+async def start_cmd(message: types.Message):
+    if message.chat.type == "private":
+        await message.answer("👋 Привет! Этот бот публикует видео из VK каждые 1.5 часа.",
+                             reply_markup=admin_menu())
+
+# --- публикация одного видео ---
+async def publish_one_video():
+    links = get_vk_video_links(PLAYLIST_URL)
+    for url in links:
+        direct = await get_direct_link(url)
+        if direct:
+            try:
+                await bot.send_video(CHANNEL_ID, direct, caption='🎬 Видео от [@BillysFamily](https://t.me/billysbest)', parse_mode="Markdown")
+                print(f"✅ Опубликовано: {url}")
+                return
+            except Exception as e:
+                print(f"Ошибка при отправке: {e}")
+    print("⚠️ Видео не найдено для публикации.")
+
+# --- ручная публикация ---
 @dp.callback_query(lambda c: c.data == "publish_now")
-async def manual_publish(callback: types.CallbackQuery):
-    await callback.answer("Публикую видео вне очереди...")
-    await publish_video(callback.bot.proxy_url)
-    await callback.message.answer("✅ Видео опубликовано вне очереди!")
+async def publish_now(callback: types.CallbackQuery):
+    await callback.answer("Публикуем видео...")
+    await publish_one_video()
+    await callback.message.answer("✅ Видео опубликовано вручную.")
 
-# ==========================
-# ПЛАНИРОВАНИЕ АВТОПОСТИНГА
-# ==========================
-async def scheduler(proxy_url):
+# --- автопостинг каждые 1.5 часа ---
+async def auto_posting():
     while True:
-        await publish_video(proxy_url)
+        await publish_one_video()
+        print("⏰ Следующая публикация через 1.5 часа...")
         await asyncio.sleep(5400)  # 1.5 часа
 
-# ==========================
-# ЗАПУСК
-# ==========================
+# --- запуск ---
 async def main():
-    logger.info("🤖 Бот запущен. Поиск рабочего соединения...")
-    proxy_url = await find_working_proxy()
-
-    if not proxy_url:
-        logger.error("🚫 Не найдено рабочее соединение. Завершение работы.")
-        return
-
-    asyncio.create_task(scheduler(proxy_url))
+    asyncio.create_task(auto_posting())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
