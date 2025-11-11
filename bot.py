@@ -15,7 +15,13 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 ADMINS = [int(x) for x in os.getenv("ADMINS", "").split(",") if x]
 VK_PLAYLIST_URL = os.getenv("VK_PLAYLIST_URL", "").strip()
-PROXY_URL = os.getenv("PROXY_URL", "").strip()
+
+# === SOCKS5-прокси ===
+PROXY_USER = "JR7otD"
+PROXY_PASS = "d1XsE0"
+PROXY_HOST = "195.64.101.22"
+PROXY_PORT = "8000"
+PROXY_URL = f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -30,6 +36,7 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox
 YDL_BASE = {
     "cookiefile": COOKIES_PATH,
     "user_agent": UA,
+    "proxy": PROXY_URL,
     "http_headers": {
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         "Referer": "https://vkvideo.ru/",
@@ -39,11 +46,7 @@ YDL_BASE = {
     "nocheckcertificate": True,
 }
 
-if PROXY_URL:
-    YDL_BASE["proxy"] = PROXY_URL
-    print(f"🌐 Прокси включён: {PROXY_URL}")
-else:
-    print("⚙️ Прокси не используется.")
+print(f"🌐 Используется SOCKS5-прокси: {PROXY_URL}")
 
 # === Инициализация базы ===
 async def init_db():
@@ -64,7 +67,7 @@ def admin_menu():
 
 # === Получение списка видео из VK ===
 async def fetch_videos_from_vk():
-    print(f"🌍 Используется прокси: {YDL_BASE.get('proxy')}")
+    print(f"🌍 Проверка прокси: {YDL_BASE.get('proxy')}")
     try:
         opts = {**YDL_BASE, "extract_flat": "in_playlist", "skip_download": True}
         with YoutubeDL(opts) as ydl:
