@@ -35,17 +35,27 @@ COOKIES_PATH = "cookies.txt"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
 YDL_BASE = {
     "cookiefile": COOKIES_PATH,
-    "user_agent": UA,
     "proxy": PROXY_URL,
-    "http_headers": {
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": "https://vkvideo.ru/",
-        "Origin": "https://vkvideo.ru",
-    },
     "geo_bypass": True,
     "nocheckcertificate": True,
     "quiet": True,
+    "user_agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) "
+        "Gecko/20100101 Firefox/121.0"
+    ),
+    "http_headers": {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://vkvideo.ru/",
+        "Origin": "https://vkvideo.ru",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    },
+    "extractor_args": {
+        "generic": {"player_client": ["html5"]},
+    },
 }
+
 
 print(f"🌐 Используется SOCKS5-прокси: {PROXY_URL}")
 
