@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 import yt_dlp
 
 # ==========================
-# НАСТРОЙКА ЛОГОВ
+# ЛОГИ
 # ==========================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 # ЗАГРУЗКА .ENV
 # ==========================
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 VK_PLAYLIST_URL = os.getenv("VK_PLAYLIST_URL")
@@ -37,16 +36,34 @@ bot = Bot(
 dp = Dispatcher()
 
 # ==========================
-# ЗАГРУЗКА СПИСКА ВИДЕО
+# ПРОВЕРКА ПРОКСИ
+# ==========================
+async def test_proxy():
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://vkvideo.ru", proxy=PROXY_URL, timeout=10) as resp:
+                if resp.status == 200:
+                    logger.info("✅ Прокси работает и подключается к vkvideo.ru")
+                else:
+                    logger.warning(f"⚠️ Прокси отвечает, но vkvideo.ru вернул статус {resp.status}")
+    except Exception as e:
+        logger.error(f"❌ Прокси не работает: {e}")
+
+# ==========================
+# ЗАГРУЗКА ВИДЕО СПИСКА
 # ==========================
 async def fetch_vk_videos():
+    cookie_file = "cookies.txt"
     ydl_opts = {
         "proxy": PROXY_URL,
         "extract_flat": True,
         "quiet": True,
         "skip_download": True,
-        "extractor_args": {"vk": {"api": "auto"}}
     }
+
+    if os.path.exists(cookie_file):
+        ydl_opts["cookiefile"] = cookie_file
+        logger.info("🍪 Используется cookies.txt для авторизации VK.")
 
     logger.info(f"Используется прокси: {PROXY_URL}")
     logger.info(f"Используется плейлист: {VK_PLAYLIST_URL}")
@@ -56,7 +73,7 @@ async def fetch_vk_videos():
             result = ydl.extract_info(VK_PLAYLIST_URL, download=False)
 
         if "entries" in result:
-            videos = [entry["url"] for entry in result["entries"] if "url" in entry]
+            videos = [e["url"] for e in result["entries"] if "url" in e]
             logger.info(f"Найдено видео в плейлисте: {len(videos)}")
             return videos
         else:
@@ -75,12 +92,11 @@ async def publish_video():
     if not videos:
         await bot.send_message(CHANNEL_ID, "⚠️ Нет доступных видео или ошибка получения плейлиста.")
         return
-
     video_url = random.choice(videos)
     await bot.send_message(CHANNEL_ID, f"📹 Новое видео: {video_url}")
 
 # ==========================
-# ОБРАБОТЧИК КОМАНД
+# КОМАНДЫ
 # ==========================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -96,18 +112,19 @@ async def manual_publish(callback: types.CallbackQuery):
     await callback.message.answer("✅ Видео опубликовано вне очереди!")
 
 # ==========================
-# ЦИКЛ АВТОПУБЛИКАЦИИ
+# ПЛАНИРОВАНИЕ АВТОПОСТИНГА
 # ==========================
 async def scheduler():
     while True:
         await publish_video()
-        await asyncio.sleep(5400)  # каждые 1.5 часа
+        await asyncio.sleep(5400)  # 1.5 часа
 
 # ==========================
 # ЗАПУСК
 # ==========================
 async def main():
     logger.info("🤖 Бот запущен. Автопостинг каждые 1.5 часа.")
+    await test_proxy()
     asyncio.create_task(scheduler())
     await dp.start_polling(bot)
 
