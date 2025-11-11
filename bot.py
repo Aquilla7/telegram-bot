@@ -1,4 +1,3 @@
-
 import os
 import asyncio
 import aiohttp
@@ -27,45 +26,49 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 VK_PLAYLIST_URL = os.getenv("VK_PLAYLIST_URL")
 
 # ==========================
-# НОВЫЙ SOCKS5-ПРОКСИ
+# ПРОКСИ НАСТРОЙКИ
 # ==========================
 PROXY_USER = "VGRNRd"
 PROXY_PASS = "0BVZC4"
 PROXY_HOST = "147.45.38.23"
 PROXY_PORT = "8000"
-PROXY_URL = f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
+
+PROXIES = [
+    f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
+    f"https://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}",
+    None,  # без прокси
+]
 
 # ==========================
 # НАСТРОЙКА БОТА
 # ==========================
-bot = Bot(
-    token=BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 # ==========================
 # ПРОВЕРКА ПРОКСИ
 # ==========================
-async def test_proxy():
-    """Проверяет, доступен ли VK через указанный прокси"""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get("https://vkvideo.ru", proxy=PROXY_URL, timeout=10) as resp:
-                if resp.status == 200:
-                    logger.info("✅ Прокси работает и подключается к vkvideo.ru")
-                else:
-                    logger.warning(f"⚠️ Прокси отвечает, но vkvideo.ru вернул статус {resp.status}")
-    except Exception as e:
-        logger.error(f"❌ Прокси не работает: {e}")
+async def find_working_proxy():
+    """Перебирает варианты и возвращает первый рабочий прокси"""
+    for proxy in PROXIES:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://vkvideo.ru", proxy=proxy, timeout=10) as resp:
+                    if resp.status == 200:
+                        logger.info(f"✅ Рабочее соединение найдено: {proxy or 'без прокси'}")
+                        return proxy
+        except Exception as e:
+            logger.warning(f"⚠️ Прокси не подошёл: {proxy} — {e}")
+    logger.error("❌ Ни один вариант соединения не сработал.")
+    return None
 
 # ==========================
 # ЗАГРУЗКА СПИСКА ВИДЕО
 # ==========================
-async def fetch_vk_videos():
+async def fetch_vk_videos(proxy_url):
     cookie_file = "cookies.txt"
     ydl_opts = {
-        "proxy": PROXY_URL,
+        "proxy": proxy_url,
         "extract_flat": True,
         "quiet": True,
         "skip_download": True,
@@ -75,8 +78,8 @@ async def fetch_vk_videos():
         ydl_opts["cookiefile"] = cookie_file
         logger.info("🍪 Используется cookies.txt для авторизации VK.")
 
-    logger.info(f"Используется прокси: {PROXY_URL}")
-    logger.info(f"Используется плейлист: {VK_PLAYLIST_URL}")
+    logger.info(f"📡 Используется прокси: {proxy_url or 'без прокси'}")
+    logger.info(f"🎞️ Используется плейлист: {VK_PLAYLIST_URL}")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -96,10 +99,9 @@ async def fetch_vk_videos():
 # ==========================
 # ПУБЛИКАЦИЯ ВИДЕО
 # ==========================
-async def publish_video():
-    """Выбирает случайное видео из плейлиста и публикует его в канал"""
+async def publish_video(proxy_url):
     logger.info("🚀 Автопубликация...")
-    videos = await fetch_vk_videos()
+    videos = await fetch_vk_videos(proxy_url)
     if not videos:
         await bot.send_message(CHANNEL_ID, "⚠️ Нет доступных видео или ошибка получения плейлиста.")
         return
@@ -107,7 +109,7 @@ async def publish_video():
     await bot.send_message(CHANNEL_ID, f"📹 Новое видео: {video_url}")
 
 # ==========================
-# КОМАНДЫ БОТА
+# КОМАНДЫ
 # ==========================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -119,25 +121,29 @@ async def cmd_start(message: types.Message):
 @dp.callback_query(lambda c: c.data == "publish_now")
 async def manual_publish(callback: types.CallbackQuery):
     await callback.answer("Публикую видео вне очереди...")
-    await publish_video()
+    await publish_video(callback.bot.proxy_url)
     await callback.message.answer("✅ Видео опубликовано вне очереди!")
 
 # ==========================
 # ПЛАНИРОВАНИЕ АВТОПОСТИНГА
 # ==========================
-async def scheduler():
-    """Запускает бесконечный цикл автопубликации каждые 1.5 часа"""
+async def scheduler(proxy_url):
     while True:
-        await publish_video()
+        await publish_video(proxy_url)
         await asyncio.sleep(5400)  # 1.5 часа
 
 # ==========================
-# ЗАПУСК БОТА
+# ЗАПУСК
 # ==========================
 async def main():
-    logger.info("🤖 Бот запущен. Автопостинг каждые 1.5 часа.")
-    await test_proxy()
-    asyncio.create_task(scheduler())
+    logger.info("🤖 Бот запущен. Поиск рабочего соединения...")
+    proxy_url = await find_working_proxy()
+
+    if not proxy_url:
+        logger.error("🚫 Не найдено рабочее соединение. Завершение работы.")
+        return
+
+    asyncio.create_task(scheduler(proxy_url))
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
