@@ -1,3 +1,4 @@
+
 import os
 import asyncio
 import aiohttp
@@ -12,7 +13,7 @@ from dotenv import load_dotenv
 import yt_dlp
 
 # ==========================
-# ЛОГИ
+# ЛОГИРОВАНИЕ
 # ==========================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,7 +25,15 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 VK_PLAYLIST_URL = os.getenv("VK_PLAYLIST_URL")
-PROXY_URL = os.getenv("PROXY_URL")
+
+# ==========================
+# НОВЫЙ SOCKS5-ПРОКСИ
+# ==========================
+PROXY_USER = "VGRNRd"
+PROXY_PASS = "0BVZC4"
+PROXY_HOST = "147.45.38.23"
+PROXY_PORT = "8000"
+PROXY_URL = f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_PORT}"
 
 # ==========================
 # НАСТРОЙКА БОТА
@@ -39,6 +48,7 @@ dp = Dispatcher()
 # ПРОВЕРКА ПРОКСИ
 # ==========================
 async def test_proxy():
+    """Проверяет, доступен ли VK через указанный прокси"""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get("https://vkvideo.ru", proxy=PROXY_URL, timeout=10) as resp:
@@ -50,7 +60,7 @@ async def test_proxy():
         logger.error(f"❌ Прокси не работает: {e}")
 
 # ==========================
-# ЗАГРУЗКА ВИДЕО СПИСКА
+# ЗАГРУЗКА СПИСКА ВИДЕО
 # ==========================
 async def fetch_vk_videos():
     cookie_file = "cookies.txt"
@@ -87,6 +97,7 @@ async def fetch_vk_videos():
 # ПУБЛИКАЦИЯ ВИДЕО
 # ==========================
 async def publish_video():
+    """Выбирает случайное видео из плейлиста и публикует его в канал"""
     logger.info("🚀 Автопубликация...")
     videos = await fetch_vk_videos()
     if not videos:
@@ -96,14 +107,14 @@ async def publish_video():
     await bot.send_message(CHANNEL_ID, f"📹 Новое видео: {video_url}")
 
 # ==========================
-# КОМАНДЫ
+# КОМАНДЫ БОТА
 # ==========================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📤 Опубликовать видео вне очереди", callback_data="publish_now")]
     ])
-    await message.answer("Бот активен. Автопубликация каждые 1.5 часа.", reply_markup=kb)
+    await message.answer("🤖 Бот активен. Автопубликация каждые 1.5 часа.", reply_markup=kb)
 
 @dp.callback_query(lambda c: c.data == "publish_now")
 async def manual_publish(callback: types.CallbackQuery):
@@ -115,12 +126,13 @@ async def manual_publish(callback: types.CallbackQuery):
 # ПЛАНИРОВАНИЕ АВТОПОСТИНГА
 # ==========================
 async def scheduler():
+    """Запускает бесконечный цикл автопубликации каждые 1.5 часа"""
     while True:
         await publish_video()
         await asyncio.sleep(5400)  # 1.5 часа
 
 # ==========================
-# ЗАПУСК
+# ЗАПУСК БОТА
 # ==========================
 async def main():
     logger.info("🤖 Бот запущен. Автопостинг каждые 1.5 часа.")
