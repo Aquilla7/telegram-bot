@@ -8,11 +8,11 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from yt_dlp import YoutubeDL
 from dotenv import load_dotenv
 from selenium import webdriver
-from selenium.webdriver.firefox.options import Options
-import geckodriver_autoinstaller
+from selenium.webdriver.chrome.options import Options
+import chromedriver_autoinstaller
 
-# ===== Автоматическая установка драйвера =====
-geckodriver_autoinstaller.install()
+# ===== Автоматическая установка ChromeDriver =====
+chromedriver_autoinstaller.install()
 
 # ===== Настройки =====
 load_dotenv()
@@ -26,41 +26,29 @@ dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
 
-# ===== Получение cookies через Selenium =====
+# ===== Получение cookies через Chromium =====
 def get_vk_cookies():
     try:
-        logging.info("🌐 Запуск headless Firefox для получения cookies...")
+        logging.info("🌐 Запуск headless Chromium для получения cookies...")
         options = Options()
-        options.add_argument("--headless")
+        options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--window-size=1920,1080")
+        options.add_argument("--ignore-certificate-errors")
 
         if PROXY_URL and PROXY_URL.startswith("socks5://"):
-            parts = PROXY_URL.replace("socks5://", "").split("@")
-            if len(parts) == 2:
-                auth, addr = parts
-                proxy_host, proxy_port = addr.split(":")
-                user, pwd = auth.split(":")
-                options.set_preference("network.proxy.type", 1)
-                options.set_preference("network.proxy.socks", proxy_host)
-                options.set_preference("network.proxy.socks_port", int(proxy_port))
-                options.set_preference("network.proxy.socks_username", user)
-                options.set_preference("network.proxy.socks_password", pwd)
-                options.set_preference("network.proxy.socks_remote_dns", True)
-                logging.info(f"🧩 Прокси: {proxy_host}:{proxy_port}")
-            else:
-                proxy_host, proxy_port = parts[0].split(":")
-                options.set_preference("network.proxy.type", 1)
-                options.set_preference("network.proxy.socks", proxy_host)
-                options.set_preference("network.proxy.socks_port", int(proxy_port))
-                options.set_preference("network.proxy.socks_remote_dns", True)
+            proxy_clean = PROXY_URL.replace("socks5://", "")
+            options.add_argument(f"--proxy-server=socks5://{proxy_clean}")
+            logging.info(f"🧩 Используется прокси: {proxy_clean}")
 
-        driver = webdriver.Firefox(options=options)
+        driver = webdriver.Chrome(options=options)
         driver.get("https://vkvideo.ru")
         time.sleep(5)
         cookies = driver.get_cookies()
         driver.quit()
+
         cookies_dict = {c["name"]: c["value"] for c in cookies}
         logging.info(f"🍪 Получено cookies: {len(cookies_dict)}")
         return cookies_dict
@@ -77,7 +65,7 @@ def build_ydl_opts(cookies):
         "nocheckcertificate": True,
         "quiet": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0 Safari/537.36",
             "Accept-Language": "ru,en-US;q=0.8,en;q=0.5",
             "Referer": "https://vkvideo.ru/",
         },
