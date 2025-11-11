@@ -2,7 +2,6 @@ import asyncio
 import os
 import random
 import aiosqlite
-import subprocess
 import json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -25,6 +24,20 @@ POST_INTERVAL = 90 * 60  # 1.5 часа
 TMP_FILE = "video.mp4"
 COOKIES_PATH = "cookies.txt"
 
+# Базовые опции для yt-dlp (важно: cookiefile + заголовки)
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0"
+YDL_BASE = {
+    "cookiefile": COOKIES_PATH,
+    "user_agent": UA,
+    "http_headers": {
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://vkvideo.ru/",
+        "Origin": "https://vkvideo.ru",
+    },
+    "quiet": True,
+    "nocheckcertificate": True,  # на случай, если у провайдера цепочка криво отдается
+}
+
 # ---------- База ----------
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -42,36 +55,35 @@ def admin_menu():
     builder.add(types.KeyboardButton(text="📤 Опубликовать видео вне очереди"))
     return builder.as_markup(resize_keyboard=True)
 
-# ---------- Получение списка видео через subprocess ----------
+# ---------- Получение списка видео через yt-dlp (Python API) ----------
 async def fetch_videos_from_vk():
     try:
-        result = subprocess.run([
-            "yt-dlp",
-            "--cookies", COOKIES_PATH,
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "--no-warnings",
-            "--flat-playlist",
-            "-j",
-            VK_PLAYLIST_URL
-        ], capture_output=True, text=True)
+        # extract_flat — получаем плоский список без скачивания
+        opts = {**YDL_BASE, "extract_flat": "in_playlist", "skip_download": True}
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(VK_PLAYLIST_URL, download=False)
 
-        if result.returncode != 0:
-            print("❌ Ошибка при запросе yt-dlp:", result.stderr)
+        # Если плейлист вернул редирект/пусто — info может быть None
+        if not info:
+            print("❌ yt-dlp вернул пустой результат (возможно, куки не приняты)")
             return []
 
+        # Унифицируем структуру: у плейлиста обычно есть 'entries'
+        entries = info.get("entries") or []
         videos = []
-        for line in result.stdout.splitlines():
-            try:
-                data = json.loads(line)
-                url = data.get("url") or data.get("webpage_url")
-                title = data.get("title", "Без названия")
-                vid = data.get("id") or url
-                if url:
-                    if url.startswith("/video"):
-                        url = "https://vkvideo.ru" + url
-                    videos.append({"id": vid, "url": url, "title": title})
-            except json.JSONDecodeError:
+        for it in entries:
+            # Для extract_flat yt-dlp обычно отдает url/id/title на уровне элемента
+            url = it.get("url") or it.get("webpage_url")
+            vid = it.get("id") or url
+            title = it.get("title") or "Без названия"
+
+            if not url:
                 continue
+            # Иногда приходит относительный путь вида /video-... — нормализуем
+            if url.startswith("/video"):
+                url = "https://vkvideo.ru" + url
+
+            videos.append({"id": vid, "url": url, "title": title})
 
         print(f"📋 Найдено видео в плейлисте: {len(videos)}")
         return videos
@@ -90,10 +102,10 @@ async def get_next_video():
         rows = await db.execute_fetchall("SELECT id FROM published_videos")
         published_ids = {r[0] for r in rows}
 
+    # берем первое непубликованное; если все были — вернем случайное
     for video in videos:
         if video["id"] not in published_ids:
             return video
-
     return random.choice(videos)
 
 # ---------- Отправка видео ----------
@@ -112,18 +124,17 @@ async def publish_video():
             os.remove(TMP_FILE)
 
         print(f"⬇️ Скачиваю: {video['title']} | {video_url}")
-        result = subprocess.run([
-            "yt-dlp",
-            "--cookies", COOKIES_PATH,
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "-f", "best[ext=mp4][filesize<1900M]/best",
-            "-o", TMP_FILE,
-            video_url
-        ], capture_output=True, text=True)
+        opts = {
+            **YDL_BASE,
+            "format": "best[ext=mp4][filesize<1900M]/best",
+            "outtmpl": TMP_FILE,
+        }
+        with YoutubeDL(opts) as ydl:
+            ydl.download([video_url])
 
-        if result.returncode != 0 or not os.path.exists(TMP_FILE):
-            print("❌ Ошибка при скачивании:", result.stderr)
-            await notify_admins("❌ Не удалось скачать видео. Возможно, куки устарели.")
+        if not os.path.exists(TMP_FILE):
+            print("❌ Файл не появился после скачивания")
+            await notify_admins("❌ Не удалось скачать видео. Возможно, cookies устарели.")
             return False
 
         print("📤 Отправляю в канал файл:", TMP_FILE)
