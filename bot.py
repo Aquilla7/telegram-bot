@@ -2,7 +2,6 @@ import asyncio
 import os
 import random
 import aiosqlite
-import json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
@@ -10,12 +9,13 @@ from aiogram.types import FSInputFile
 from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
 
-# === Загрузка переменных окружения ===
+# === Загрузка .env ===
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 ADMINS = [int(x) for x in os.getenv("ADMINS", "").split(",") if x]
 VK_PLAYLIST_URL = os.getenv("VK_PLAYLIST_URL", "").strip()
+PROXY_URL = os.getenv("PROXY_URL", "").strip()
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -25,10 +25,7 @@ POST_INTERVAL = 90 * 60  # 1.5 часа
 TMP_FILE = "video.mp4"
 COOKIES_PATH = "cookies.txt"
 
-# === Настройки прокси ===
-PROXY_URL = os.getenv("PROXY_URL", "").strip()
-
-# === Базовые опции yt-dlp ===
+# === Конфигурация yt-dlp ===
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0"
 YDL_BASE = {
     "cookiefile": COOKIES_PATH,
@@ -42,14 +39,13 @@ YDL_BASE = {
     "nocheckcertificate": True,
 }
 
-# если указан прокси — добавляем в конфигурацию
 if PROXY_URL:
     YDL_BASE["proxy"] = PROXY_URL
     print(f"🌐 Прокси включён: {PROXY_URL}")
 else:
     print("⚙️ Прокси не используется.")
 
-# ---------- База ----------
+# === Инициализация базы ===
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -60,21 +56,22 @@ async def init_db():
         """)
         await db.commit()
 
-# ---------- Клавиатура ----------
+# === Клавиатура ===
 def admin_menu():
     builder = ReplyKeyboardBuilder()
     builder.add(types.KeyboardButton(text="📤 Опубликовать видео вне очереди"))
     return builder.as_markup(resize_keyboard=True)
 
-# ---------- Получение списка видео ----------
+# === Получение списка видео из VK ===
 async def fetch_videos_from_vk():
+    print(f"🌍 Используется прокси: {YDL_BASE.get('proxy')}")
     try:
         opts = {**YDL_BASE, "extract_flat": "in_playlist", "skip_download": True}
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(VK_PLAYLIST_URL, download=False)
 
         if not info:
-            print("❌ yt-dlp вернул пустой результат (возможно, куки не приняты или VK блокирует IP)")
+            print("❌ yt-dlp вернул пустой результат.")
             return []
 
         entries = info.get("entries") or []
@@ -83,37 +80,33 @@ async def fetch_videos_from_vk():
             url = it.get("url") or it.get("webpage_url")
             vid = it.get("id") or url
             title = it.get("title") or "Без названия"
-
             if not url:
                 continue
             if url.startswith("/video"):
                 url = "https://vkvideo.ru" + url
-
             videos.append({"id": vid, "url": url, "title": title})
 
-        print(f"📋 Найдено видео в плейлисте: {len(videos)}")
+        print(f"📋 Найдено видео: {len(videos)}")
         return videos
 
     except Exception as e:
         print(f"❌ Ошибка при получении списка видео: {e}")
         return []
 
-# ---------- Выбор следующего ----------
+# === Выбор следующего видео ===
 async def get_next_video():
     videos = await fetch_videos_from_vk()
     if not videos:
         return None
-
     async with aiosqlite.connect(DB_PATH) as db:
         rows = await db.execute_fetchall("SELECT id FROM published_videos")
         published_ids = {r[0] for r in rows}
-
     for video in videos:
         if video["id"] not in published_ids:
             return video
     return random.choice(videos)
 
-# ---------- Отправка видео ----------
+# === Публикация видео ===
 async def publish_video():
     video = await get_next_video()
     if not video:
@@ -129,17 +122,13 @@ async def publish_video():
             os.remove(TMP_FILE)
 
         print(f"⬇️ Скачиваю: {video['title']} | {video_url}")
-        opts = {
-            **YDL_BASE,
-            "format": "best[ext=mp4][filesize<1900M]/best",
-            "outtmpl": TMP_FILE,
-        }
+        opts = {**YDL_BASE, "format": "best[ext=mp4][filesize<1900M]/best", "outtmpl": TMP_FILE}
         with YoutubeDL(opts) as ydl:
             ydl.download([video_url])
 
         if not os.path.exists(TMP_FILE):
-            print("❌ Файл не появился после скачивания")
-            await notify_admins("❌ Не удалось скачать видео. Возможно, cookies устарели или прокси недоступен.")
+            print("❌ Файл не скачался.")
+            await notify_admins("❌ Не удалось скачать видео. Возможно, cookies устарели или прокси не работает.")
             return False
 
         print("📤 Отправляю видео в канал...")
@@ -147,13 +136,11 @@ async def publish_video():
         await bot.send_video(chat_id=CHANNEL_ID, video=video_file, caption=caption, parse_mode="HTML")
 
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO published_videos (id, url) VALUES (?, ?)",
-                (video["id"], video_url)
-            )
+            await db.execute("INSERT OR REPLACE INTO published_videos (id, url) VALUES (?, ?)",
+                             (video["id"], video_url))
             await db.commit()
 
-        print("✅ Публикация успешна.")
+        print("✅ Видео опубликовано успешно.")
         return True
 
     except Exception as e:
@@ -165,7 +152,7 @@ async def publish_video():
         if os.path.exists(TMP_FILE):
             os.remove(TMP_FILE)
 
-# ---------- Уведомление админов ----------
+# === Уведомление админов ===
 async def notify_admins(text: str):
     for admin_id in ADMINS:
         try:
@@ -173,26 +160,25 @@ async def notify_admins(text: str):
         except Exception:
             pass
 
-# ---------- Планировщик ----------
+# === Автопубликация ===
 async def scheduler():
     while True:
         print("⏰ Автопубликация...")
         await publish_video()
-        print("🕒 Следующая попытка через 1.5 часа.")
+        print("🕒 Следующая публикация через 1.5 часа.")
         await asyncio.sleep(POST_INTERVAL)
 
-# ---------- /start ----------
+# === Команды ===
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     if message.from_user.id in ADMINS:
         await message.answer(
-            "👋 Привет, админ!\nБот публикует видео каждые 1.5 часа.",
+            "👋 Привет! Бот публикует видео каждые 1.5 часа.",
             reply_markup=admin_menu()
         )
     else:
-        await message.answer("Этот бот предназначен только для администраторов.")
+        await message.answer("⛔ Этот бот предназначен только для администраторов.")
 
-# ---------- Ручная публикация ----------
 @dp.message(lambda m: m.text == "📤 Опубликовать видео вне очереди")
 async def manual_publish(message: types.Message):
     if message.from_user.id not in ADMINS:
@@ -201,7 +187,7 @@ async def manual_publish(message: types.Message):
     ok = await publish_video()
     await message.answer("✅ Готово!" if ok else "⚠️ Не удалось опубликовать.")
 
-# ---------- Запуск ----------
+# === Запуск ===
 async def main():
     await init_db()
     print(f"🎬 Используется плейлист: {VK_PLAYLIST_URL}")
