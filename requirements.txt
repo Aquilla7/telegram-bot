@@ -4,4 +4,4 @@ python-dotenv==1.0.1
 aiohttp==3.9.5
 yt-dlp==2024.10.7
 selenium
-geckodriver-autoinstaller
+chromedriver-autoinstaller
