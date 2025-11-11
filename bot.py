@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from yt_dlp import YoutubeDL
 from dotenv import load_dotenv
@@ -16,7 +17,7 @@ PROXY_URL = os.getenv("PROXY_URL")
 COOKIES_PATH = "cookies.txt"
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
 
@@ -46,7 +47,6 @@ YDL_BASE = {
 
 # ======================= ФУНКЦИИ =======================
 async def get_video_list():
-    """Получает список видео из плейлиста"""
     try:
         with YoutubeDL(YDL_BASE) as ydl:
             info = ydl.extract_info(VK_PLAYLIST_URL, download=False)
@@ -62,7 +62,6 @@ async def get_video_list():
         return []
 
 async def download_video(url):
-    """Скачивает видео и возвращает путь"""
     try:
         opts = YDL_BASE.copy()
         opts.update({"outtmpl": "video.%(ext)s", "quiet": True})
@@ -75,7 +74,6 @@ async def download_video(url):
         return None
 
 async def publish_video():
-    """Публикует одно видео в канал"""
     try:
         videos = await get_video_list()
         if not videos:
@@ -110,14 +108,17 @@ async def auto_publish():
         await publish_video()
         await asyncio.sleep(5400)  # 1.5 часа
 
-# ======================= КНОПКИ =======================
-@dp.message_handler(commands=["start"])
+# ======================= КОМАНДЫ =======================
+@dp.message(Command("start"))
 async def start_cmd(message: types.Message):
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("📤 Опубликовать видео вне очереди", callback_data="publish_now"))
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Опубликовать видео вне очереди", callback_data="publish_now")]
+        ]
+    )
     await message.answer("Привет! Бот запущен и готов публиковать видео каждые 1.5 часа.", reply_markup=keyboard)
 
-@dp.callback_query_handler(lambda c: c.data == "publish_now")
+@dp.callback_query(lambda c: c.data == "publish_now")
 async def publish_now(callback_query: types.CallbackQuery):
     await callback_query.message.answer("🚀 Публикую видео вне очереди...")
     await publish_video()
