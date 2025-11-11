@@ -6,6 +6,7 @@ import json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
+from aiogram.types import FSInputFile
 from dotenv import load_dotenv
 from yt_dlp import YoutubeDL
 
@@ -24,7 +25,10 @@ POST_INTERVAL = 90 * 60  # 1.5 часа
 TMP_FILE = "video.mp4"
 COOKIES_PATH = "cookies.txt"
 
-# Базовые опции для yt-dlp (важно: cookiefile + заголовки)
+# === Настройки прокси ===
+PROXY_URL = os.getenv("PROXY_URL", "").strip()
+
+# === Базовые опции yt-dlp ===
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:119.0) Gecko/20100101 Firefox/119.0"
 YDL_BASE = {
     "cookiefile": COOKIES_PATH,
@@ -35,8 +39,15 @@ YDL_BASE = {
         "Origin": "https://vkvideo.ru",
     },
     "quiet": True,
-    "nocheckcertificate": True,  # на случай, если у провайдера цепочка криво отдается
+    "nocheckcertificate": True,
 }
+
+# если указан прокси — добавляем в конфигурацию
+if PROXY_URL:
+    YDL_BASE["proxy"] = PROXY_URL
+    print(f"🌐 Прокси включён: {PROXY_URL}")
+else:
+    print("⚙️ Прокси не используется.")
 
 # ---------- База ----------
 async def init_db():
@@ -55,31 +66,26 @@ def admin_menu():
     builder.add(types.KeyboardButton(text="📤 Опубликовать видео вне очереди"))
     return builder.as_markup(resize_keyboard=True)
 
-# ---------- Получение списка видео через yt-dlp (Python API) ----------
+# ---------- Получение списка видео ----------
 async def fetch_videos_from_vk():
     try:
-        # extract_flat — получаем плоский список без скачивания
         opts = {**YDL_BASE, "extract_flat": "in_playlist", "skip_download": True}
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(VK_PLAYLIST_URL, download=False)
 
-        # Если плейлист вернул редирект/пусто — info может быть None
         if not info:
-            print("❌ yt-dlp вернул пустой результат (возможно, куки не приняты)")
+            print("❌ yt-dlp вернул пустой результат (возможно, куки не приняты или VK блокирует IP)")
             return []
 
-        # Унифицируем структуру: у плейлиста обычно есть 'entries'
         entries = info.get("entries") or []
         videos = []
         for it in entries:
-            # Для extract_flat yt-dlp обычно отдает url/id/title на уровне элемента
             url = it.get("url") or it.get("webpage_url")
             vid = it.get("id") or url
             title = it.get("title") or "Без названия"
 
             if not url:
                 continue
-            # Иногда приходит относительный путь вида /video-... — нормализуем
             if url.startswith("/video"):
                 url = "https://vkvideo.ru" + url
 
@@ -102,7 +108,6 @@ async def get_next_video():
         rows = await db.execute_fetchall("SELECT id FROM published_videos")
         published_ids = {r[0] for r in rows}
 
-    # берем первое непубликованное; если все были — вернем случайное
     for video in videos:
         if video["id"] not in published_ids:
             return video
@@ -134,12 +139,12 @@ async def publish_video():
 
         if not os.path.exists(TMP_FILE):
             print("❌ Файл не появился после скачивания")
-            await notify_admins("❌ Не удалось скачать видео. Возможно, cookies устарели.")
+            await notify_admins("❌ Не удалось скачать видео. Возможно, cookies устарели или прокси недоступен.")
             return False
 
-        print("📤 Отправляю в канал файл:", TMP_FILE)
-        with open(TMP_FILE, "rb") as f:
-            await bot.send_video(CHANNEL_ID, f, caption=caption)
+        print("📤 Отправляю видео в канал...")
+        video_file = FSInputFile(TMP_FILE)
+        await bot.send_video(chat_id=CHANNEL_ID, video=video_file, caption=caption, parse_mode="HTML")
 
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
