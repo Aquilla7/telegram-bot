@@ -7,16 +7,12 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 import yt_dlp
-import chromedriver_autoinstaller
-import subprocess
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
 
 # ==========================
-# НАСТРОЙКА ЛОГИРОВАНИЯ
+# НАСТРОЙКА ЛОГОВ
 # ==========================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,56 +25,36 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 VK_PLAYLIST_URL = os.getenv("VK_PLAYLIST_URL")
-
-PROXY_USER = os.getenv("PROXY_USER")
-PROXY_PASS = os.getenv("PROXY_PASS")
-PROXY_IP = os.getenv("PROXY_IP")
-PROXY_PORT = os.getenv("PROXY_PORT")
+PROXY_URL = os.getenv("PROXY_URL")
 
 # ==========================
-# ИНИЦИАЛИЗАЦИЯ БОТА
+# НАСТРОЙКА БОТА
 # ==========================
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher()
-
-# ==========================
-# УСТАНОВКА CHROMIUM
-# ==========================
-CHROME_DIR = "/tmp/chrome"
-CHROME_PATH = os.path.join(CHROME_DIR, "chrome-linux64", "chrome")
-
-if not os.path.exists(CHROME_PATH):
-    logger.info("⬇️ Скачиваю Chromium...")
-    os.makedirs(CHROME_DIR, exist_ok=True)
-    subprocess.run(
-        "wget https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/1211495/chrome-linux64.zip -O /tmp/chrome.zip && unzip /tmp/chrome.zip -d /tmp/chrome",
-        shell=True,
-        check=True,
-    )
-else:
-    logger.info("✅ Chromium уже установлен.")
-
-chromedriver_autoinstaller.install()
 
 # ==========================
 # ЗАГРУЗКА СПИСКА ВИДЕО
 # ==========================
 async def fetch_vk_videos():
-    proxy_url = f"socks5://{PROXY_USER}:{PROXY_PASS}@{PROXY_IP}:{PROXY_PORT}"
     ydl_opts = {
-        "proxy": proxy_url,
+        "proxy": PROXY_URL,
         "extract_flat": True,
         "quiet": True,
         "skip_download": True,
         "extractor_args": {"vk": {"api": "auto"}}
     }
 
-    logger.info(f"Используется прокси: {proxy_url}")
+    logger.info(f"Используется прокси: {PROXY_URL}")
     logger.info(f"Используется плейлист: {VK_PLAYLIST_URL}")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             result = ydl.extract_info(VK_PLAYLIST_URL, download=False)
+
         if "entries" in result:
             videos = [entry["url"] for entry in result["entries"] if "url" in entry]
             logger.info(f"Найдено видео в плейлисте: {len(videos)}")
